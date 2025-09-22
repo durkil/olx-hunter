@@ -1,7 +1,9 @@
 package scraper
 
-import(
+import (
+	"fmt"
 	"net/http"
+	"github.com/gocolly/colly/v2"
 )
 
 type Listing struct {
@@ -29,8 +31,26 @@ func NewOLXScraper() *OLXScraper {
 }
 
 func (s *OLXScraper) SearchListings(query string) ([]Listing, error) {
-	return []Listing{
-		{URL: "https://www.olx.ua/d/uk/obyavlenie/iphone-15-test-1.html"},
-		{URL: "https://www.olx.ua/d/uk/obyavlenie/iphone-15-test-2.html"},
-	}, nil
+	searchURL := fmt.Sprintf("https://www.olx.ua/uk/list/q-%s/", query)
+
+	c := colly.NewCollector()
+
+	urlMap := make(map[string]bool)
+	var listings []Listing
+
+	c.OnHTML("a[href*='/d/uk/obyavlenie/']", func(e *colly.HTMLElement) {
+		fullURL := "https://www.olx.ua" + e.Attr("href")
+
+		if !urlMap[fullURL] {
+			urlMap[fullURL] = true
+			listings = append(listings, Listing{URL: fullURL})
+		}
+	})
+
+	err := c.Visit(searchURL)
+	if err != nil {
+		return nil, err
+	}
+
+	return listings, nil
 }

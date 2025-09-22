@@ -9,7 +9,7 @@ func main() {
 	fmt.Println("OLX scraper is started!")
 
 	s := scraper.NewOLXScraper()
-	listings, err := s.SearchListings("iPhone")
+	listings, err := s.SearchListings("iphone-15-pro-max")
 
 	if err != nil {
 		fmt.Println("Error: %v\n", err)
