@@ -9,15 +9,26 @@ func main() {
 	fmt.Println("OLX scraper is started!")
 
 	s := scraper.NewOLXScraper()
-	listings, err := s.SearchListings("iphone-15-pro-max")
+	filters := scraper.SearchFilters{
+		Query: "iphone-15-pro-max",
+		MinPrice: 25000,
+		MaxPrice: 30000,
+		City: "одеса",
+	}
+	listings, err := s.SearchListings(filters)
 
 	if err != nil {
-		fmt.Println("Error: %v\n", err)
+		fmt.Printf("Error: %v\n", err)
 		return
 	}
 
 	fmt.Printf("Found %d listings:\n", len(listings))
 	for i, listing := range listings {
-		fmt.Printf("%d. %s\n", i+1, listing.URL)
+		fmt.Printf("%d. %s (%s) - %s\n%s\n\n", 
+		i+1,
+		listing.Title, 
+		listing.Price,
+		listing.Location,
+		listing.URL)
 	}
 }

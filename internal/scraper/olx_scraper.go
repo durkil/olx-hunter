@@ -3,11 +3,25 @@ package scraper
 import (
 	"fmt"
 	"net/http"
+	"strconv"
+	"strings"
+
 	"github.com/gocolly/colly/v2"
 )
 
 type Listing struct {
 	URL string `json:"url"`
+	Title string `json:"title"`
+	Price string `json:"price"`
+	PriceInt int `json:"price_int"`
+	Location string `json:"location"`
+}
+
+type SearchFilters struct {
+	Query string `json:"query"`
+	MinPrice int    `json:"min_price"`
+    MaxPrice int    `json:"max_price"`
+    City     string `json:"city"` 
 }
 
 type OLXResponse struct {
@@ -17,7 +31,7 @@ type OLXResponse struct {
 }
 
 type Scraper interface {
-	SearchListings(query string) ([]Listing, error)
+	SearchListings(filters SearchFilters) ([]Listing, error)
 }
 
 type OLXScraper struct {
@@ -30,8 +44,19 @@ func NewOLXScraper() *OLXScraper {
 	}
 }
 
-func (s *OLXScraper) SearchListings(query string) ([]Listing, error) {
-	searchURL := fmt.Sprintf("https://www.olx.ua/uk/list/q-%s/", query)
+func parsePrice(priceStr string) int {
+	cleanedPrice := strings.ReplaceAll(priceStr, " ", "")
+	cleanedPrice = strings.ReplaceAll(cleanedPrice, "грн.", "")
+
+	price, err := strconv.Atoi(cleanedPrice)
+	if err != nil {
+		return 0
+	}
+	return price
+}
+
+func (s *OLXScraper) SearchListings(filters SearchFilters) ([]Listing, error) {
+	searchURL := fmt.Sprintf("https://www.olx.ua/uk/list/q-%s/", filters.Query)
 
 	c := colly.NewCollector()
 
@@ -43,7 +68,36 @@ func (s *OLXScraper) SearchListings(query string) ([]Listing, error) {
 
 		if !urlMap[fullURL] {
 			urlMap[fullURL] = true
-			listings = append(listings, Listing{URL: fullURL})
+			
+			card := e.DOM.Closest("[data-cy='l-card']")
+
+			title := card.Find("h4").Text()
+			priceText := card.Find("p[data-testid='ad-price']").Text()
+			location := card.Find("p[data-testid='location-date']").Text()
+
+			listing := Listing{
+				URL: fullURL,
+				Title: strings.TrimSpace(title),
+				Price: strings.TrimSpace(priceText),
+				PriceInt: parsePrice(priceText),
+				Location: strings.TrimSpace(location),
+			}
+			
+			if filters.MinPrice > 0 && listing.PriceInt < filters.MinPrice {
+				return
+			}
+			if filters.MaxPrice < 0 && listing.PriceInt > filters.MaxPrice {
+				return
+			}
+
+			if filters.City != "" {
+				cityLower := strings.ToLower(filters.City)
+				locationLower := strings.ToLower(listing.Location)
+				if !strings.Contains(locationLower, cityLower) {
+					return
+				}
+			}
+			listings = append(listings, listing)
 		}
 	})
 
