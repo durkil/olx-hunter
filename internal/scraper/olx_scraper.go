@@ -10,24 +10,18 @@ import (
 )
 
 type Listing struct {
-	URL string `json:"url"`
-	Title string `json:"title"`
-	Price string `json:"price"`
-	PriceInt int `json:"price_int"`
+	URL      string `json:"url"`
+	Title    string `json:"title"`
+	Price    string `json:"price"`
+	PriceInt int    `json:"price_int"`
 	Location string `json:"location"`
 }
 
 type SearchFilters struct {
-	Query string `json:"query"`
+	Query    string `json:"query"`
 	MinPrice int    `json:"min_price"`
-    MaxPrice int    `json:"max_price"`
-    City     string `json:"city"` 
-}
-
-type OLXResponse struct {
-	Data []struct {
-		URL string `json:"url"`
-	} `json:"data"`
+	MaxPrice int    `json:"max_price"`
+	City     string `json:"city"`
 }
 
 type Scraper interface {
@@ -68,7 +62,7 @@ func (s *OLXScraper) SearchListings(filters SearchFilters) ([]Listing, error) {
 
 		if !urlMap[fullURL] {
 			urlMap[fullURL] = true
-			
+
 			card := e.DOM.Closest("[data-cy='l-card']")
 
 			title := card.Find("h4").Text()
@@ -76,17 +70,17 @@ func (s *OLXScraper) SearchListings(filters SearchFilters) ([]Listing, error) {
 			location := card.Find("p[data-testid='location-date']").Text()
 
 			listing := Listing{
-				URL: fullURL,
-				Title: strings.TrimSpace(title),
-				Price: strings.TrimSpace(priceText),
+				URL:      fullURL,
+				Title:    strings.TrimSpace(title),
+				Price:    strings.TrimSpace(priceText),
 				PriceInt: parsePrice(priceText),
 				Location: strings.TrimSpace(location),
 			}
-			
+
 			if filters.MinPrice > 0 && listing.PriceInt < filters.MinPrice {
 				return
 			}
-			if filters.MaxPrice < 0 && listing.PriceInt > filters.MaxPrice {
+			if filters.MaxPrice > 0 && listing.PriceInt > filters.MaxPrice {
 				return
 			}
 
