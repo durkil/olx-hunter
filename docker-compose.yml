@@ -1,0 +1,15 @@
+services:
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: olx_hunter
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./migrations:/docker-entrypoint-initdb.d
+
+volumes:
+  postgres_data:
