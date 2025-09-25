@@ -27,6 +27,8 @@ type UserFilter struct {
 	City      string    `json:"city" gorm:"size:50"`
 	IsActive  bool      `json:"is_active" gorm:"default:true"`
 	CreatedAt time.Time `json:"created_at"`
+	
+	User      User      `gorm:"foreignKey:UserID"`
 }
 
 type DB struct {

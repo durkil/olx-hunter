@@ -91,3 +91,4 @@ func (db *DB) GetActiveFilters() ([]*UserFilter, error) {
 	err := db.Where("is_active = ?", true).Preload("User").Find(&filters).Error
 	return filters, err
 }
+
