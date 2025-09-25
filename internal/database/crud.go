@@ -76,4 +76,18 @@ func (db *DB) UpdateFilter(filterID, userID uint, name, query string, minPrice, 
 		}).Error
 }
 
+func (db *DB) DeleteFilter(filterID, userID uint) error {
+	return db.Where("id = ? AND user_id = ?", filterID, userID).Delete(&UserFilter{}).Error
+}
 
+func (db *DB) ToggleFilter(filterID, userID uint) error {
+	return db.Model(&UserFilter{}).
+		Where("id = ? AND user_id = ?", filterID, userID).
+		Update("is_active", gorm.Expr("NOT is_active")).Error
+}
+
+func (db *DB) GetActiveFilters() ([]*UserFilter, error) {
+	var filters []*UserFilter
+	err := db.Where("is_active = ?", true).Preload("User").Find(&filters).Error
+	return filters, err
+}
