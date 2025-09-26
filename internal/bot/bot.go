@@ -116,7 +116,7 @@ func (b *Bot) handleHelp(message *tgbotapi.Message) {
 /add - додати новий фільтр
 
 Приклад:
-/add "iPhone 15" iphone-15 25000 35000 київ
+/add iPhone15;iphone-15;25000;35000;київ
 
 💡 Підказка: після створення фільтру я буду автоматично шукати нові оголошення і надсилати тобі!`
 
@@ -157,9 +157,9 @@ func (b *Bot) handleList(message *tgbotapi.Message) {
 		text := `📝 У тебе поки що немає фільтрів.
 
 Створи перший фільтр командою:
-/add "iPhone 15" iphone-15 25000 35000 київ
+/add iPhone15;iphone-15;25000;35000;київ
 
-Формат: назва, запит, мін_ціна, макс_ціна, місто`
+Формат: назва;запит;мін_ціна;макс_ціна;місто`
 
 		b.sendMessage(message.Chat.ID, text)
 		return
@@ -201,36 +201,26 @@ func (b *Bot) handleList(message *tgbotapi.Message) {
 }
 
 func (b *Bot) handleAdd(message *tgbotapi.Message) {
-	args := strings.Fields(message.CommandArguments())
+	args := strings.Split(message.CommandArguments(), ";")
 
 	if len(args) != 5 {
 		text := `❌ Неправильний формат команди!
 
 📝 Правильний формат:
-/add назва запит мін_ціна макс_ціна місто
+/add назва;запит;мін_ціна;макс_ціна;місто
 
 📋 Приклад:
-/add iPhone15 iphone-15 25000 35000 київ`
+/add iPhone15;iphone-15;25000;35000;київ`
         
         b.sendMessage(message.Chat.ID, text)
         return
 	}
 
-	name := args[0]
-	query := args[1]
-
-	minPrice, err := strconv.Atoi(args[2])
-	if err != nil {
-		b.sendMessage(message.Chat.ID, "❌ Мінімальна ціна має бути числом!")
-		return
-	}
-	maxPrice, err := strconv.Atoi(args[3])
-	if err != nil {
-		b.sendMessage(message.Chat.ID, "❌ Максимальна ціна має бути числом!")
-		return
-	}
-
-	city := args[4]
+	name := strings.TrimSpace(args[0])
+	query := strings.TrimSpace(args[1])
+	minPriceStr := strings.TrimSpace(args[2])
+	maxPriceStr := strings.TrimSpace(args[3])
+	city := strings.TrimSpace(args[4])
 
 	if name == "" {
 		b.sendMessage(message.Chat.ID, "❌ Назва фільтру не може бути пустою!")
@@ -240,6 +230,31 @@ func (b *Bot) handleAdd(message *tgbotapi.Message) {
 		b.sendMessage(message.Chat.ID, "❌ Пошуковий запит не може бути пустим!")
 		return
 	}
+
+	var minPrice, maxPrice int
+	var err error
+
+	if minPriceStr != "" {
+		minPrice, err = strconv.Atoi(minPriceStr)
+		if err != nil {
+			b.sendMessage(message.Chat.ID, "❌ Мінімальна ціна має бути числом!")
+			return
+		}
+	}
+	
+	if maxPriceStr != "" {
+		maxPrice, err = strconv.Atoi(maxPriceStr)
+		if err != nil {
+			b.sendMessage(message.Chat.ID, "❌ Максимальна ціна має бути числом!")
+			return
+		}
+	}
+
+	if minPrice < 0 || maxPrice < 0 {
+		b.sendMessage(message.Chat.ID, "❌ Ціни не можуть бути від'ємними!")
+		return
+	} 
+
 	if minPrice > maxPrice && maxPrice > 0 {
 		b.sendMessage(message.Chat.ID, "❌ Мінімальна ціна не може бути більшою за максимальну!")
 		return
