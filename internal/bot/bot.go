@@ -1,6 +1,7 @@
 package bot
 
 import (
+	"fmt"
 	"log"
 
 	"olx-hunter/internal/database"
@@ -64,6 +65,8 @@ func (b *Bot) handleMessage(message *tgbotapi.Message) {
 			b.handleStart(message)
 		case "help":
 			b.handleHelp(message)
+		case "list":
+			b.handleList(message)
 		default:
 			b.handleUnknown(message)
 		}
@@ -104,7 +107,7 @@ func (b *Bot) handleHelp(message *tgbotapi.Message) {
 /start - почати роботу з ботом
 /help - показати цю довідку
 
-🔍 Фільтري:
+🔍 Фільтри:
 /list - показати мої фільтри
 /add - додати новий фільтр
 
@@ -117,7 +120,9 @@ func (b *Bot) handleHelp(message *tgbotapi.Message) {
 }
 
 func (b *Bot) handleUnknown(message *tgbotapi.Message) {
-	text := `❓ Невідома команда: ` + message.Command() + `Використай /help щоб побачити всі доступні команди.`
+	text := `❓ Невідома команда: ` + message.Command() + `
+
+Використай /help щоб побачити всі доступні команди.`
 	
 	b.sendMessage(message.Chat.ID, text)
 }
@@ -126,6 +131,67 @@ func (b *Bot) handleText(message *tgbotapi.Message) {
 	text := `💬 Я отримав твоє повідомлення: "` + message.Text + `"
 
 Але я поки що працюю тільки з командами. Спробуй /help щоб побачити що я вмію! 🤖`
+
+	b.sendMessage(message.Chat.ID, text)
+}
+
+func (b *Bot) handleList(message *tgbotapi.Message) {
+	user, err := b.db.GetUserByTelegramID(message.From.ID)
+	if err != nil || user == nil {
+		b.sendMessage(message.Chat.ID, "❌ Помилка отримання даних користувача")
+		return
+	}
+
+	filters, err := b.db.GetUserFilters(user.ID)
+	if err != nil {
+		log.Printf("Error getting user filters", err)
+		b.sendMessage(message.Chat.ID, "❌ Помилка отримання фільтрів пошуку")
+		return
+	}
+
+	if len(filters) == 0 {
+		text := `📝 У тебе поки що немає фільтрів.
+
+Створи перший фільтр командою:
+/add "iPhone 15" iphone-15 25000 35000 київ
+
+Формат: назва, запит, мін_ціна, макс_ціна, місто`
+
+		b.sendMessage(message.Chat.ID, text)
+		return
+	}
+
+	text := fmt.Sprintf("📋 Твої фільтри (%d):\n\n", len(filters))
+
+	for i, filter := range filters {
+		status := "🟢"
+		if !filter.IsActive {
+			status = "🔴"
+		}
+
+		text += fmt.Sprintf("%s **%d.** %s\n", status, i+1, filter.Name)
+		text += fmt.Sprintf("   🔍 Запит: `%s`\n", filter.Query)
+
+		if filter.MinPrice > 0 || filter.MaxPrice > 0 {
+			priceRange := ""
+			if filter.MinPrice > 0 && filter.MaxPrice > 0 {
+				priceRange = fmt.Sprintf("%d - %d грн", filter.MinPrice, filter.MaxPrice)
+			} else if filter.MinPrice > 0 {
+				priceRange = fmt.Sprintf("від %d грн", filter.MinPrice)
+			} else {
+				priceRange = fmt.Sprintf("до %d грн", filter.MaxPrice)
+			}
+			text += fmt.Sprintf("   💰 Ціна: %s\n", priceRange)
+		}
+
+		if filter.City != "" {
+			text += fmt.Sprintf("   🏙 Місто: %s\n", filter.City)
+		}
+
+		text += "\n"
+	}
+
+	text += "🟢 активний | 🔴 неактивний"
 
 	b.sendMessage(message.Chat.ID, text)
 }
