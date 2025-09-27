@@ -7,13 +7,14 @@ import (
 	"strings"
 
 	"olx-hunter/internal/database"
+	"olx-hunter/internal/scraper"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 type Bot struct {
 	api *tgbotapi.BotAPI
-	db *database.DB
+	db  *database.DB
 }
 
 func NewBot(token string, db *database.DB) (*Bot, error) {
@@ -28,7 +29,7 @@ func NewBot(token string, db *database.DB) (*Bot, error) {
 
 	return &Bot{
 		api: api,
-		db: db,
+		db:  db,
 	}, nil
 }
 
@@ -71,6 +72,8 @@ func (b *Bot) handleMessage(message *tgbotapi.Message) {
 			b.handleList(message)
 		case "add":
 			b.handleAdd(message)
+		case "search":
+			b.handleSearch(message)
 		default:
 			b.handleUnknown(message)
 		}
@@ -127,7 +130,7 @@ func (b *Bot) handleUnknown(message *tgbotapi.Message) {
 	text := `❓ Невідома команда: ` + message.Command() + `
 
 Використай /help щоб побачити всі доступні команди.`
-	
+
 	b.sendMessage(message.Chat.ID, text)
 }
 
@@ -211,9 +214,9 @@ func (b *Bot) handleAdd(message *tgbotapi.Message) {
 
 📋 Приклад:
 /add iPhone15;iphone-15;25000;35000;київ`
-        
-        b.sendMessage(message.Chat.ID, text)
-        return
+
+		b.sendMessage(message.Chat.ID, text)
+		return
 	}
 
 	name := strings.TrimSpace(args[0])
@@ -241,7 +244,7 @@ func (b *Bot) handleAdd(message *tgbotapi.Message) {
 			return
 		}
 	}
-	
+
 	if maxPriceStr != "" {
 		maxPrice, err = strconv.Atoi(maxPriceStr)
 		if err != nil {
@@ -253,7 +256,7 @@ func (b *Bot) handleAdd(message *tgbotapi.Message) {
 	if minPrice < 0 || maxPrice < 0 {
 		b.sendMessage(message.Chat.ID, "❌ Ціни не можуть бути від'ємними!")
 		return
-	} 
+	}
 
 	if minPrice > maxPrice && maxPrice > 0 {
 		b.sendMessage(message.Chat.ID, "❌ Мінімальна ціна не може бути більшою за максимальну!")
@@ -296,4 +299,57 @@ func (b *Bot) handleAdd(message *tgbotapi.Message) {
 	successText += "\n\n🟢 Фільтр активний і готовий до роботи!"
 
 	b.sendMessage(message.Chat.ID, successText)
+}
+
+func (b *Bot) handleSearch(message *tgbotapi.Message) {
+	args := strings.Fields(message.CommandArguments())
+
+	if len(args) == 0 {
+		b.sendMessage(message.Chat.ID, `🔍 Тестовий пошук на OLX:
+
+Використання: /search запит [мін_ціна] [макс_ціна] [місто]
+Приклади:
+/search iphone-15
+/search iphone-15 25000 35000
+/search iphone-15 0 0 київ`)
+		return
+	}
+	query := args[0]
+	minPrice, maxPrice := 0, 0
+	city := ""
+
+	if len(args) > 1 {
+		minPrice, _ = strconv.Atoi(args[1])
+	}
+	if len(args) > 2 {
+		maxPrice, _ = strconv.Atoi(args[2])
+	}
+	if len(args) > 3 {
+		city = strings.Join(args[3:], " ")
+	}
+
+	olxScraper := scraper.NewOLXScraper()
+
+	filters := scraper.SearchFilters{
+		Query:    query,
+		MinPrice: minPrice,
+		MaxPrice: maxPrice,
+		City:     city,
+	}
+
+	listings, err := olxScraper.SearchListings(filters)
+	if err != nil {
+		log.Printf("Error scraping OLX: %v", err)
+		b.sendMessage(message.Chat.ID, "❌ Помилка пошуку на OLX: "+err.Error())
+		return
+	}
+	response := fmt.Sprintf("🔍 Знайдено %d оголошень:\n\n", len(listings))
+	for i, listing := range listings {
+		if i >= 5 {
+			response += fmt.Sprintf("... та ще %d оголошень", len(listings)-5)
+			break
+		}
+		response += fmt.Sprintf("%d. %s\n%s\n%s\n🔗 %s\n\n", i+1, listing.Title, listing.Price, listing.Location, listing.URL)
+	}
+	b.sendMessage(message.Chat.ID, response)
 }
