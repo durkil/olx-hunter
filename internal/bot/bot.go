@@ -17,6 +17,13 @@ type Bot struct {
 	db  *database.DB
 }
 
+type FilterCreationState struct {
+	Step int
+	Data map[string]string
+}
+
+var creationStates = make(map[int64]*FilterCreationState)
+
 func NewBot(token string, db *database.DB) (*Bot, error) {
 	api, err := tgbotapi.NewBotAPI(token)
 	if err != nil {
@@ -74,6 +81,8 @@ func (b *Bot) handleMessage(message *tgbotapi.Message) {
 			b.handleAdd(message)
 		case "search":
 			b.handleSearch(message)
+		case "create":
+			b.handleCreate(message)
 		default:
 			b.handleUnknown(message)
 		}
@@ -135,11 +144,42 @@ func (b *Bot) handleUnknown(message *tgbotapi.Message) {
 }
 
 func (b *Bot) handleText(message *tgbotapi.Message) {
-	text := `💬 Я отримав твоє повідомлення: "` + message.Text + `"
+	state, exists := creationStates[message.From.ID]
+	if !exists {
+		text := `💬 Я отримав твоє повідомлення: "` + message.Text + `"
 
 Але я поки що працюю тільки з командами. Спробуй /help щоб побачити що я вмію! 🤖`
 
-	b.sendMessage(message.Chat.ID, text)
+		b.sendMessage(message.Chat.ID, text)
+		return
+	}
+
+	switch state.Step {
+	case 1:
+		state.Data["name"] = message.Text
+		state.Step++
+		b.sendMessage(message.Chat.ID, "🔍 Введи пошуковий запит (наприклад, iphone-15):")
+	case 2:
+		state.Data["query"] = message.Text
+		state.Step++
+		b.sendMessage(message.Chat.ID, "💰 Мінімальна ціна (або 0):")
+	case 3:
+		state.Data["min_price"] = message.Text
+		state.Step++
+		b.sendMessage(message.Chat.ID, "💰 Максимальна ціна (або 0):")
+	case 4:
+		state.Data["max_price"] = message.Text
+		state.Step++
+		b.sendMessage(message.Chat.ID, "🏙 Місто (або залиш порожнім, або введи -):")
+	case 5:
+		city := strings.TrimSpace(message.Text)
+		if city == "-" {
+			city = ""
+		}
+		state.Data["city"] = message.Text
+		b.sendMessage(message.Chat.ID, "✅ Фільтр створено! (Тут буде інтеграція з OLX Scraper)")
+		delete(creationStates, message.From.ID)
+	}
 }
 
 func (b *Bot) handleList(message *tgbotapi.Message) {
@@ -352,4 +392,13 @@ func (b *Bot) handleSearch(message *tgbotapi.Message) {
 		response += fmt.Sprintf("%d. %s\n%s\n%s\n🔗 %s\n\n", i+1, listing.Title, listing.Price, listing.Location, listing.URL)
 	}
 	b.sendMessage(message.Chat.ID, response)
+}
+
+func (b *Bot) handleCreate(message *tgbotapi.Message) {
+
+	creationStates[message.From.ID] = &FilterCreationState{
+		Step: 1,
+		Data: make(map[string]string),
+	}
+	b.sendMessage(message.Chat.ID, "📝 Введи назву фільтра:")
 }
