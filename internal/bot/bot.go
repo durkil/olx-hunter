@@ -79,6 +79,8 @@ func (b *Bot) handleMessage(message *tgbotapi.Message) {
 			b.handleList(message)
 		case "create":
 			b.handleCreate(message)
+		case "find":
+			b.handleFind(message)
 		default:
 			b.handleUnknown(message)
 		}
@@ -122,8 +124,10 @@ func (b *Bot) handleHelp(message *tgbotapi.Message) {
 🔍 Фільтри:
 /list - показати мої фільтри
 /create - створити новий фільтр (покроково)
+/find - знайти оголошення по конкретному фільтру
+/find [номер] - знайти по фільтру з номером
 
-💡 Підказка: після створення фільтру я буду автоматично шукати нові оголошення і надсилати тобі!`
+💡 Підказка: введи "-" щоб пропустити необов'язкові поля (ціна, місто)`
 
 	b.sendMessage(message.Chat.ID, helpText)
 }
@@ -157,11 +161,19 @@ func (b *Bot) handleText(message *tgbotapi.Message) {
 		state.Step++
 		b.sendMessage(message.Chat.ID, "💰 Мінімальна ціна (або 0):")
 	case 3:
-		state.Data["min_price"] = message.Text
+		minPriceStr := strings.TrimSpace(message.Text)
+		if minPriceStr == "-" {
+			minPriceStr = "0"
+		}
+		state.Data["min_price"] = minPriceStr
 		state.Step++
 		b.sendMessage(message.Chat.ID, "💰 Максимальна ціна (або 0):")
 	case 4:
-		state.Data["max_price"] = message.Text
+		maxPriceStr := strings.TrimSpace(message.Text)
+		if maxPriceStr == "-" {
+			maxPriceStr = "0"
+		}
+		state.Data["max_price"] = maxPriceStr
 		state.Step++
 		b.sendMessage(message.Chat.ID, "🏙 Місто (або залиш порожнім, або введи -):")
 	case 5:
@@ -177,7 +189,7 @@ func (b *Bot) handleText(message *tgbotapi.Message) {
 		maxPriceStr := strings.TrimSpace(state.Data["max_price"])
 
 		minPrice := 0
-		if minPriceStr != "0" {
+		if minPriceStr != "0" && minPriceStr != "" {
 			var err error
 			minPrice, err = strconv.Atoi(minPriceStr)
 			if err != nil {
@@ -188,7 +200,7 @@ func (b *Bot) handleText(message *tgbotapi.Message) {
 		}
 
 		maxPrice := 0
-		if maxPriceStr != "0" {
+		if maxPriceStr != "0" && minPriceStr != "" {
 			var err error
 			maxPrice, err = strconv.Atoi(maxPriceStr)
 			if err != nil {
@@ -199,12 +211,14 @@ func (b *Bot) handleText(message *tgbotapi.Message) {
 		}
 
 		if minPrice < 0 || maxPrice < 0 {
-		b.sendMessage(message.Chat.ID, "❌ Ціни не можуть бути від'ємними!")
-		return
+			b.sendMessage(message.Chat.ID, "❌ Ціни не можуть бути від'ємними!")
+			delete(creationStates, message.From.ID)
+			return
 		}
 
 		if minPrice > maxPrice && maxPrice > 0 {
 			b.sendMessage(message.Chat.ID, "❌ Мінімальна ціна не може бути більшою за максимальну!")
+			delete(creationStates, message.From.ID)
 			return
 		}
 
@@ -241,7 +255,7 @@ func (b *Bot) handleText(message *tgbotapi.Message) {
             successText += "\n💰 Ціна: без обмежень"
         }
 
-		if createdFilter.City != "-" {
+		if createdFilter.City != "" {
 			successText += fmt.Sprintf("\n🏙 Місто: %s", createdFilter.City)
 		}
 
@@ -267,12 +281,7 @@ func (b *Bot) handleList(message *tgbotapi.Message) {
 	}
 
 	if len(filters) == 0 {
-		text := `📝 У тебе поки що немає фільтрів.
-
-Створи перший фільтр командою:
-/add iPhone15;iphone-15;25000;35000;київ
-
-Формат: назва;запит;мін_ціна;макс_ціна;місто`
+		text := `📝 У тебе поки що немає фільтрів.`
 
 		b.sendMessage(message.Chat.ID, text)
 		return
@@ -320,4 +329,90 @@ func (b *Bot) handleCreate(message *tgbotapi.Message) {
 		Data: make(map[string]string),
 	}
 	b.sendMessage(message.Chat.ID, "📝 Введи назву фільтра:")
+}
+
+func (b *Bot) handleFind(message *tgbotapi.Message) {
+	args := strings.Fields(message.CommandArguments())
+
+	user, err := b.db.GetUserByTelegramID(message.From.ID)
+	if err != nil || user == nil {
+		b.sendMessage(message.Chat.ID, "❌ Помилка отримання даних користувача")
+		return
+	}
+
+	filters, err := b.db.GetUserFilters(user.ID)
+	if err != nil {
+		b.sendMessage(message.Chat.ID, "❌ Помилка отримання фільтрів")
+		return
+	}
+
+	if len(filters) == 0 {
+		b.sendMessage(message.Chat.ID, "❌ У тебе немає активних фільтрів. Створи через /create")
+		return
+	}
+
+	if len(args) == 0 {
+		text := "🔍 Вкажи номер фільтра для пошуку:\n\n"
+		for i, filter := range filters {
+			status := "🟢"
+			if !filter.IsActive {
+				status = "🔴"
+			}
+			text += fmt.Sprintf("%s **%d.** %s - `%s`\n", status, i+1, filter.Name, filter.Query)
+		}
+		text += "\n📝 Використання: `/find 1` (для пошуку по першому фільтру)"
+		b.sendMessage(message.Chat.ID, text)
+		return
+	}
+
+	filterNum, err := strconv.Atoi(args[0])
+	if err != nil || filterNum < 1 || filterNum < len(filters) {
+		b.sendMessage(message.Chat.ID, fmt.Sprintf("❌ Невірний номер фільтра. Використай номер від 1 до %d", len(filters)))
+		return
+	}
+
+	selectedFilter := filters[filterNum-1]
+
+	if !selectedFilter.IsActive {
+		b.sendMessage(message.Chat.ID, "❌ Цей фільтр неактивний")
+		return
+	}
+
+	b.sendMessage(message.Chat.ID, "🔍 Шукаю оголошення по твоїх фільтрах...")
+
+	olxScraper := scraper.NewOLXScraper()
+	searchFilters := scraper.SearchFilters{
+		Query:    selectedFilter.Query,
+		MinPrice: selectedFilter.MinPrice,
+		MaxPrice: selectedFilter.MaxPrice,
+		City:     selectedFilter.City,
+	}
+
+	listings, err := olxScraper.SearchListings(searchFilters)
+	if err != nil {
+		log.Printf("Error scraping for filter %d: %v", selectedFilter.ID, err)
+		b.sendMessage(message.Chat.ID, "❌ Помилка пошуку на OLX")
+		return
+	}
+
+	if len(listings) == 0 {
+		b.sendMessage(message.Chat.ID, "😔 Оголошень не знайдено")
+		return
+	}
+
+	text := fmt.Sprintf("📋 **%s** - знайдено %d:\n\n", selectedFilter.Name, len(listings))
+
+	for i, listing := range listings {
+		if i >= 5 {
+			break
+		}
+		text += fmt.Sprintf("%d. %s\n💰 %s\n📍 %s\n🔗 %s\n\n",
+			i+1, listing.Title, listing.Price, listing.Location, listing.URL)
+	}
+	
+	if len(listings) > 5 {
+		text += fmt.Sprintf("... і ще %d оголошень\n\n", len(listings)-5)
+	}
+	
+	b.sendMessage(message.Chat.ID, text)
 }
