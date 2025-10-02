@@ -77,10 +77,6 @@ func (b *Bot) handleMessage(message *tgbotapi.Message) {
 			b.handleHelp(message)
 		case "list":
 			b.handleList(message)
-		case "add":
-			b.handleAdd(message)
-		case "search":
-			b.handleSearch(message)
 		case "create":
 			b.handleCreate(message)
 		default:
@@ -125,10 +121,7 @@ func (b *Bot) handleHelp(message *tgbotapi.Message) {
 
 🔍 Фільтри:
 /list - показати мої фільтри
-/add - додати новий фільтр
-
-Приклад:
-/add iPhone15;iphone-15;25000;35000;київ
+/create - створити новий фільтр (покроково)
 
 💡 Підказка: після створення фільтру я буду автоматично шукати нові оголошення і надсилати тобі!`
 
@@ -176,8 +169,85 @@ func (b *Bot) handleText(message *tgbotapi.Message) {
 		if city == "-" {
 			city = ""
 		}
-		state.Data["city"] = message.Text
-		b.sendMessage(message.Chat.ID, "✅ Фільтр створено! (Тут буде інтеграція з OLX Scraper)")
+		state.Data["city"] = city
+		
+		name := strings.TrimSpace(state.Data["name"])
+		query := strings.TrimSpace(state.Data["query"])
+		minPriceStr := strings.TrimSpace(state.Data["min_price"])
+		maxPriceStr := strings.TrimSpace(state.Data["max_price"])
+
+		minPrice := 0
+		if minPriceStr != "0" {
+			var err error
+			minPrice, err = strconv.Atoi(minPriceStr)
+			if err != nil {
+				b.sendMessage(message.Chat.ID, "❌ Мінімальна ціна має бути числом!")
+				delete(creationStates, message.From.ID)
+				return
+			}
+		}
+
+		maxPrice := 0
+		if maxPriceStr != "0" {
+			var err error
+			maxPrice, err = strconv.Atoi(maxPriceStr)
+			if err != nil {
+				b.sendMessage(message.Chat.ID, "❌ Максимальна ціна має бути числом!")
+				delete(creationStates, message.From.ID)
+				return
+			}
+		}
+
+		if minPrice < 0 || maxPrice < 0 {
+		b.sendMessage(message.Chat.ID, "❌ Ціни не можуть бути від'ємними!")
+		return
+		}
+
+		if minPrice > maxPrice && maxPrice > 0 {
+			b.sendMessage(message.Chat.ID, "❌ Мінімальна ціна не може бути більшою за максимальну!")
+			return
+		}
+
+		user, err := b.db.GetUserByTelegramID(message.From.ID)
+		if err != nil || user == nil {
+			b.sendMessage(message.Chat.ID, "❌ Помилка отримання даних користувача")
+			delete(creationStates, message.From.ID)
+			return
+		}
+
+		createdFilter, err := b.db.CreateFilter(user.ID, name, query, minPrice, maxPrice, city)
+		if err != nil {
+			log.Printf("Error creating filter: %v", err)
+			b.sendMessage(message.Chat.ID, "❌ Помилка створення фільтру. Спробуй ще раз.")
+			delete(creationStates, message.From.ID)
+			return
+		}
+
+		successText := fmt.Sprintf(`✅ Фільтр створено успішно!
+
+📋 **%s**
+🔍 Запит: %s`, createdFilter.Name, createdFilter.Query)
+
+		if createdFilter.MinPrice > 0 || createdFilter.MaxPrice > 0 {
+			successText += "\n💰 Ціна: "
+            if createdFilter.MinPrice > 0 && createdFilter.MaxPrice > 0 {
+                successText += fmt.Sprintf("%d - %d грн", createdFilter.MinPrice, createdFilter.MaxPrice)
+            } else if createdFilter.MinPrice > 0 {
+                successText += fmt.Sprintf("від %d грн", createdFilter.MinPrice)
+            } else {
+                successText += fmt.Sprintf("до %d грн", createdFilter.MaxPrice)
+            }
+        } else {
+            successText += "\n💰 Ціна: без обмежень"
+        }
+
+		if createdFilter.City != "-" {
+			successText += fmt.Sprintf("\n🏙 Місто: %s", createdFilter.City)
+		}
+
+		successText += "\n\n🟢 Фільтр активний і готовий до роботи!"
+
+		b.sendMessage(message.Chat.ID, successText)
 		delete(creationStates, message.From.ID)
 	}
 }
@@ -241,157 +311,6 @@ func (b *Bot) handleList(message *tgbotapi.Message) {
 	text += "🟢 активний | 🔴 неактивний"
 
 	b.sendMessage(message.Chat.ID, text)
-}
-
-func (b *Bot) handleAdd(message *tgbotapi.Message) {
-	args := strings.Split(message.CommandArguments(), ";")
-
-	if len(args) != 5 {
-		text := `❌ Неправильний формат команди!
-
-📝 Правильний формат:
-/add назва;запит;мін_ціна;макс_ціна;місто
-
-📋 Приклад:
-/add iPhone15;iphone-15;25000;35000;київ`
-
-		b.sendMessage(message.Chat.ID, text)
-		return
-	}
-
-	name := strings.TrimSpace(args[0])
-	query := strings.TrimSpace(args[1])
-	minPriceStr := strings.TrimSpace(args[2])
-	maxPriceStr := strings.TrimSpace(args[3])
-	city := strings.TrimSpace(args[4])
-
-	if name == "" {
-		b.sendMessage(message.Chat.ID, "❌ Назва фільтру не може бути пустою!")
-		return
-	}
-	if query == "" {
-		b.sendMessage(message.Chat.ID, "❌ Пошуковий запит не може бути пустим!")
-		return
-	}
-
-	var minPrice, maxPrice int
-	var err error
-
-	if minPriceStr != "" {
-		minPrice, err = strconv.Atoi(minPriceStr)
-		if err != nil {
-			b.sendMessage(message.Chat.ID, "❌ Мінімальна ціна має бути числом!")
-			return
-		}
-	}
-
-	if maxPriceStr != "" {
-		maxPrice, err = strconv.Atoi(maxPriceStr)
-		if err != nil {
-			b.sendMessage(message.Chat.ID, "❌ Максимальна ціна має бути числом!")
-			return
-		}
-	}
-
-	if minPrice < 0 || maxPrice < 0 {
-		b.sendMessage(message.Chat.ID, "❌ Ціни не можуть бути від'ємними!")
-		return
-	}
-
-	if minPrice > maxPrice && maxPrice > 0 {
-		b.sendMessage(message.Chat.ID, "❌ Мінімальна ціна не може бути більшою за максимальну!")
-		return
-	}
-
-	user, err := b.db.GetUserByTelegramID(message.From.ID)
-	if err != nil || user == nil {
-		b.sendMessage(message.Chat.ID, "❌ Помилка отримання даних користувача")
-		return
-	}
-
-	createdFilter, err := b.db.CreateFilter(user.ID, name, query, minPrice, maxPrice, city)
-	if err != nil {
-		log.Printf("Error creating filter: %v", err)
-		b.sendMessage(message.Chat.ID, "❌ Помилка створення фільтру. Спробуй ще раз.")
-		return
-	}
-
-	successText := fmt.Sprintf(`✅ Фільтр створено успішно!
-
-📋 **%s**
-🔍 Запит: %s
-💰 Ціна: `, createdFilter.Name, createdFilter.Query)
-
-	if createdFilter.MinPrice > 0 && createdFilter.MaxPrice > 0 {
-		successText += fmt.Sprintf("%d - %d грн", createdFilter.MinPrice, createdFilter.MaxPrice)
-	} else if createdFilter.MinPrice > 0 {
-		successText += fmt.Sprintf("від %d грн", createdFilter.MinPrice)
-	} else if createdFilter.MaxPrice > 0 {
-		successText += fmt.Sprintf("до %d грн", createdFilter.MaxPrice)
-	} else {
-		successText += "без обмежень ціни"
-	}
-
-	if createdFilter.City != "" {
-		successText += fmt.Sprintf("\n🏙 Місто: %s", createdFilter.City)
-	}
-
-	successText += "\n\n🟢 Фільтр активний і готовий до роботи!"
-
-	b.sendMessage(message.Chat.ID, successText)
-}
-
-func (b *Bot) handleSearch(message *tgbotapi.Message) {
-	args := strings.Fields(message.CommandArguments())
-
-	if len(args) == 0 {
-		b.sendMessage(message.Chat.ID, `🔍 Тестовий пошук на OLX:
-
-Використання: /search запит [мін_ціна] [макс_ціна] [місто]
-Приклади:
-/search iphone-15
-/search iphone-15 25000 35000
-/search iphone-15 0 0 київ`)
-		return
-	}
-	query := args[0]
-	minPrice, maxPrice := 0, 0
-	city := ""
-
-	if len(args) > 1 {
-		minPrice, _ = strconv.Atoi(args[1])
-	}
-	if len(args) > 2 {
-		maxPrice, _ = strconv.Atoi(args[2])
-	}
-	if len(args) > 3 {
-		city = strings.Join(args[3:], " ")
-	}
-
-	olxScraper := scraper.NewOLXScraper()
-
-	filters := scraper.SearchFilters{
-		Query:    query,
-		MinPrice: minPrice,
-		MaxPrice: maxPrice,
-		City:     city,
-	}
-
-	listings, err := olxScraper.SearchListings(filters)
-	if err != nil {
-		log.Printf("Error scraping OLX: %v", err)
-		b.sendMessage(message.Chat.ID, "❌ Помилка пошуку на OLX: "+err.Error())
-		return
-	}
-	response := fmt.Sprintf("🔍 Знайдено %d оголошень:\n\n", len(listings))
-	for i, listing := range listings {
-		if i >= 5 {
-			response += fmt.Sprintf("... та ще %d оголошень", len(listings)-5)
-			break
-		}
-		response += fmt.Sprintf("%d. %s\n%s\n%s\n🔗 %s\n\n", i+1, listing.Title, listing.Price, listing.Location, listing.URL)
-	}
-	b.sendMessage(message.Chat.ID, response)
 }
 
 func (b *Bot) handleCreate(message *tgbotapi.Message) {
