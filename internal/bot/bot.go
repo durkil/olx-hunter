@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"olx-hunter/internal/cache"
 	"olx-hunter/internal/database"
 	"olx-hunter/internal/scraper"
 
@@ -13,8 +14,9 @@ import (
 )
 
 type Bot struct {
-	api *tgbotapi.BotAPI
-	db  *database.DB
+	api   *tgbotapi.BotAPI
+	db    *database.DB
+	cache *cache.RedisCache
 }
 
 type FilterCreationState struct {
@@ -32,11 +34,21 @@ func NewBot(token string, db *database.DB) (*Bot, error) {
 
 	api.Debug = false
 
+	redisCache := cache.NewRedisCache()
+
+	if err := redisCache.Ping(); err != nil {
+		log.Printf("Warning: Redis connection failed: %v", err)
+		log.Printf("Bot will work without caching!")
+	} else {
+		log.Printf("Redis connected successfully")
+	}
+
 	log.Printf("Bot is authorized as: @%s", api.Self.UserName)
 
 	return &Bot{
-		api: api,
-		db:  db,
+		api:   api,
+		db:    db,
+		cache: redisCache,
 	}, nil
 }
 
@@ -182,7 +194,7 @@ func (b *Bot) handleText(message *tgbotapi.Message) {
 			city = ""
 		}
 		state.Data["city"] = city
-		
+
 		name := strings.TrimSpace(state.Data["name"])
 		query := strings.TrimSpace(state.Data["query"])
 		minPriceStr := strings.TrimSpace(state.Data["min_price"])
@@ -244,16 +256,16 @@ func (b *Bot) handleText(message *tgbotapi.Message) {
 
 		if createdFilter.MinPrice > 0 || createdFilter.MaxPrice > 0 {
 			successText += "\n💰 Ціна: "
-            if createdFilter.MinPrice > 0 && createdFilter.MaxPrice > 0 {
-                successText += fmt.Sprintf("%d - %d грн", createdFilter.MinPrice, createdFilter.MaxPrice)
-            } else if createdFilter.MinPrice > 0 {
-                successText += fmt.Sprintf("від %d грн", createdFilter.MinPrice)
-            } else {
-                successText += fmt.Sprintf("до %d грн", createdFilter.MaxPrice)
-            }
-        } else {
-            successText += "\n💰 Ціна: без обмежень"
-        }
+			if createdFilter.MinPrice > 0 && createdFilter.MaxPrice > 0 {
+				successText += fmt.Sprintf("%d - %d грн", createdFilter.MinPrice, createdFilter.MaxPrice)
+			} else if createdFilter.MinPrice > 0 {
+				successText += fmt.Sprintf("від %d грн", createdFilter.MinPrice)
+			} else {
+				successText += fmt.Sprintf("до %d грн", createdFilter.MaxPrice)
+			}
+		} else {
+			successText += "\n💰 Ціна: без обмежень"
+		}
 
 		if createdFilter.City != "" {
 			successText += fmt.Sprintf("\n🏙 Місто: %s", createdFilter.City)
@@ -378,6 +390,19 @@ func (b *Bot) handleFind(message *tgbotapi.Message) {
 		return
 	}
 
+	cacheKey := fmt.Sprintf("%s:%d:%d:%s", selectedFilter.Query, selectedFilter.MinPrice, selectedFilter.MaxPrice, selectedFilter.City)
+
+	if cached, found := b.cache.GetCachedResults(cacheKey); found {
+		b.sendMessage(message.Chat.ID, "⚡ Результати з кешу (швидко!):")
+		b.sendSearchResults(message.Chat.ID, selectedFilter.Name, cached)
+		return
+	}
+
+	if !b.cache.CanScrapeQuery(selectedFilter.Query) {
+		b.sendMessage(message.Chat.ID, "⏰ Зачекай трохи перед наступним запитом (захист від бану)")
+		return
+	}
+
 	b.sendMessage(message.Chat.ID, "🔍 Шукаю оголошення по твоїх фільтрах...")
 
 	olxScraper := scraper.NewOLXScraper()
@@ -395,12 +420,18 @@ func (b *Bot) handleFind(message *tgbotapi.Message) {
 		return
 	}
 
+	b.cache.CacheSearchResults(cacheKey, listings)
+
+	b.sendSearchResults(message.Chat.ID, selectedFilter.Name, listings)
+}
+
+func (b *Bot) sendSearchResults(chatID int64, filterName string, listings []scraper.Listing) {
 	if len(listings) == 0 {
-		b.sendMessage(message.Chat.ID, "😔 Оголошень не знайдено")
+		b.sendMessage(chatID, "😔 Оголошень не знайдено")
 		return
 	}
 
-	text := fmt.Sprintf("📋 **%s** - знайдено %d:\n\n", selectedFilter.Name, len(listings))
+	text := fmt.Sprintf("📋 **%s** - знайдено %d:\n\n", filterName, len(listings))
 
 	for i, listing := range listings {
 		if i >= 5 {
@@ -409,10 +440,10 @@ func (b *Bot) handleFind(message *tgbotapi.Message) {
 		text += fmt.Sprintf("%d. %s\n💰 %s\n📍 %s\n🔗 %s\n\n",
 			i+1, listing.Title, listing.Price, listing.Location, listing.URL)
 	}
-	
+
 	if len(listings) > 5 {
 		text += fmt.Sprintf("... і ще %d оголошень\n\n", len(listings)-5)
 	}
-	
-	b.sendMessage(message.Chat.ID, text)
+
+	b.sendMessage(chatID, text)
 }
