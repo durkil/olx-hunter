@@ -366,7 +366,7 @@ func (b *Bot) handleFind(message *tgbotapi.Message) {
 	}
 
 	filterNum, err := strconv.Atoi(args[0])
-	if err != nil || filterNum < 1 || filterNum < len(filters) {
+	if err != nil || filterNum < 1 || filterNum > len(filters) {
 		b.sendMessage(message.Chat.ID, fmt.Sprintf("❌ Невірний номер фільтра. Використай номер від 1 до %d", len(filters)))
 		return
 	}
