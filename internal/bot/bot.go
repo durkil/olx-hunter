@@ -5,18 +5,21 @@ import (
 	"log"
 	"strconv"
 	"strings"
+	"time"
 
 	"olx-hunter/internal/cache"
 	"olx-hunter/internal/database"
+	"olx-hunter/internal/kafka"
 	"olx-hunter/internal/scraper"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 type Bot struct {
-	api   *tgbotapi.BotAPI
-	db    *database.DB
-	cache *cache.RedisCache
+	api           *tgbotapi.BotAPI
+	db            *database.DB
+	cache         *cache.RedisCache
+	kafkaProducer *kafka.Producer
 }
 
 type FilterCreationState struct {
@@ -43,12 +46,16 @@ func NewBot(token string, db *database.DB) (*Bot, error) {
 		log.Printf("Redis connected successfully")
 	}
 
+	kafkaProducer := kafka.NewProducer()
+	log.Printf("Kafka producer initialized")
+
 	log.Printf("Bot is authorized as: @%s", api.Self.UserName)
 
 	return &Bot{
-		api:   api,
-		db:    db,
-		cache: redisCache,
+		api:           api,
+		db:            db,
+		cache:         redisCache,
+		kafkaProducer: kafkaProducer,
 	}, nil
 }
 
@@ -247,6 +254,21 @@ func (b *Bot) handleText(message *tgbotapi.Message) {
 			b.sendMessage(message.Chat.ID, "❌ Помилка створення фільтру. Спробуй ще раз.")
 			delete(creationStates, message.From.ID)
 			return
+		}
+
+		kafkaEvent := kafka.FilterCreatedEvent{
+			EventType: kafka.EventFilterCreated,
+			UserID:    user.TelegramID,
+			FilterID:  createdFilter.ID,
+			Query:     createdFilter.Query,
+			MinPrice: createdFilter.MinPrice,
+			MaxPrice: createdFilter.MaxPrice,
+			City: createdFilter.City,
+			CreatedAt: time.Now(),
+		}
+
+		if err := b.kafkaProducer.PublishFilterCreated(kafkaEvent); err != nil {
+			log.Printf("Failed to publish filter_created event to Kafka: %v", err)
 		}
 
 		successText := fmt.Sprintf(`✅ Фільтр створено успішно!
