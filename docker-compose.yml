@@ -62,5 +62,30 @@ services:
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
       DYNAMIC_CONFIG_ENABLED: true
 
+  kafka-init:
+    image: confluentinc/cp-kafka:latest
+    depends_on:
+      - kafka
+    entrypoint: [ '/bin/sh', '-c' ]
+    command: |
+      "
+      # Блоки доки kafka не буде готова
+      echo -e 'Checking kafka readiness...'
+      while ! kafka-topics --bootstrap-server kafka:9092 --list; do
+        echo -e 'Waiting for kafka to be ready...'
+        sleep 1
+      done
+      echo -e 'Kafka is ready!'
+      
+      # Створюємо топіки
+      echo -e 'Creating kafka topics'
+      kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic filter_created --replication-factor 1 --partitions 1
+      kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic scrape_request --replication-factor 1 --partitions 1  
+      kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic new_listings --replication-factor 1 --partitions 1
+      
+      echo -e 'Successfully created the following topics:'
+      kafka-topics --bootstrap-server kafka:9092 --list
+      "
+
 volumes:
   postgres_data:

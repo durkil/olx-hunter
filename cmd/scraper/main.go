@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
@@ -11,12 +12,15 @@ import (
 
 	"olx-hunter/internal/database"
 	"olx-hunter/internal/kafka"
+	"olx-hunter/internal/scraper"
 )
 
 type ScraperService struct {
-	db            *database.DB
-	consumer      *kafka.Consumer
-	producer      *kafka.Producer
+	db       *database.DB
+	consumer *kafka.Consumer
+	producer *kafka.Producer
+	scraper  *scraper.OLXScraper
+
 	activeFilters map[uint]*database.UserFilter
 	filtersMutex  sync.RWMutex
 }
@@ -39,15 +43,16 @@ func NewScraperService() (*ScraperService, error) {
 	producer := kafka.NewProducer()
 	log.Println("Kafka producer created")
 
-	service := &ScraperService{
+	olxScraper := scraper.NewOLXScraper()
+	log.Println("OLX scraper created")
+
+	return &ScraperService{
 		db:            db,
 		consumer:      consumer,
 		producer:      producer,
+		scraper: olxScraper,
 		activeFilters: make(map[uint]*database.UserFilter),
-	}
-
-	log.Println("Scraper Service initialized successfully")
-	return service, nil
+	}, nil
 }
 
 func main() {
@@ -217,10 +222,29 @@ func (s *ScraperService) scrapeAllFilters() {
 func (s *ScraperService) scrapeFilter(filter *database.UserFilter) error {
 	log.Printf("Scraping filter: ID=%d, Query='%s'", filter.ID, filter.Query)
 
-	time.Sleep(1 * time.Second)
+	searchFilters := scraper.SearchFilters{
+		Query: filter.Query,
+		MinPrice: filter.MinPrice,
+		MaxPrice: filter.MaxPrice,
+		City: filter.City,
+	}
 
-	log.Printf("📊 [MOCK] Found 5 listings for filter %d", filter.ID)
-	log.Printf("🏠 [MOCK] Sample listing: iPhone 13 Pro - 25000 грн")
+	listings, err := s.scraper.SearchListings(searchFilters)
+	if err != nil {
+		return fmt.Errorf("failed to scrape OLX: %w", err)
+	}
+
+	log.Printf("Found %d listings for filter %d", len(listings), filter.ID)
+
+	if len(listings) > 0 {
+		log.Println("Sample listings:")
+		for i, listing := range listings {
+			if i >= 5 {
+				break
+			}
+			log.Printf("    %d. %s - %s (%s)", i+1, listing.Title, listing.Price, listing.Location)
+		}
+	}
 
 	return nil
 }
@@ -250,12 +274,12 @@ func (s *ScraperService) HandleFilterCreated(event kafka.FilterCreatedEvent) err
 	s.filtersMutex.Unlock()
 
 	log.Printf("Added filter %d to active monitoring", event.FilterID)
-    log.Printf("Total active filters: %d", filterCount)
+	log.Printf("Total active filters: %d", filterCount)
 
-	go func ()  {
+	go func() {
 		log.Printf("Starting immediate scraping for new filter %d...", filter.ID)
 		time.Sleep(5 * time.Second)
-		
+
 		if err := s.scrapeFilter(filter); err != nil {
 			log.Printf(" Error in immediate scraping of filter %d: %v", filter.ID, err)
 		} else {
@@ -269,17 +293,17 @@ func (s *ScraperService) HandleFilterCreated(event kafka.FilterCreatedEvent) err
 func (s *ScraperService) HandleScrapeRequest(event kafka.ScrapeRequestEvent) error {
 	log.Printf("Received scrape_request event - triggering manual scraping")
 
-	go func ()  {
+	go func() {
 		log.Println("Starting manual scraping session...")
 		s.scrapeAllFilters()
-		log.Println("Manual scraping session completed")	
+		log.Println("Manual scraping session completed")
 	}()
 
 	return nil
 }
 
 func (s *ScraperService) HandleNewListings(event kafka.NewListingsEvent) error {
-	log.Printf("Received new_listings event (FilterID=%d) - ignoring (for notification service)", 
-        event.FilterID)
+	log.Printf("Received new_listings event (FilterID=%d) - ignoring (for notification service)",
+		event.FilterID)
 	return nil
 }
