@@ -236,13 +236,50 @@ func (s *ScraperService) scrapeFilter(filter *database.UserFilter) error {
 
 	log.Printf("Found %d listings for filter %d", len(listings), filter.ID)
 
-	if len(listings) > 0 {
-		log.Println("Sample listings:")
-		for i, listing := range listings {
-			if i >= 5 {
-				break
+	if len(listings) == 0 {
+		return nil
+	}
+
+	existingURLs, err := s.db.GetExistingURLs(filter.ID)
+	if err != nil {
+		log.Printf("Failed to get existing URLs: %v", err)
+		existingURLs = []string{}
+	}
+
+	existingMap := make(map[string]bool)
+	for _, url := range existingURLs {
+		existingMap[url] = true
+	}
+
+	var newListings []scraper.Listing
+	for _, listing := range listings {
+		if !existingMap[listing.URL] {
+			newListings = append(newListings, listing)
+
+			if err := s.db.SaveListing(filter.ID, listing); err != nil {
+				log.Printf("Failed to save listing %s: %v", listing.URL, err)
 			}
-			log.Printf("    %d. %s - %s (%s)", i+1, listing.Title, listing.Price, listing.Location)
+		}
+	}
+
+	log.Printf("📈 Statistics for filter %d:", filter.ID)
+    log.Printf("    Total found: %d", len(listings))
+    log.Printf("    Already known: %d", len(listings)-len(newListings))
+    log.Printf("    New listings: %d", len(newListings))
+
+	if len(newListings) > 0 {
+		event := kafka.NewListingsEvent{
+			EventType: kafka.EventNewListings,
+			FilterID: int(filter.ID),
+			UserID: int64(filter.UserID),
+			Listings: newListings,
+			FoundAt: time.Now(),
+		}
+
+		if err := s.producer.PublishNewListings(event); err != nil {
+			log.Printf("Failed to publish new_listings event: %v", err)
+		} else {
+			log.Printf("Published new_listings event: %d new items for filter %d", len(newListings), filter.ID)
 		}
 	}
 
@@ -307,3 +344,4 @@ func (s *ScraperService) HandleNewListings(event kafka.NewListingsEvent) error {
 		event.FilterID)
 	return nil
 }
+

@@ -1,6 +1,10 @@
 package database
 
-import "gorm.io/gorm"
+import (
+	"olx-hunter/internal/scraper"
+
+	"gorm.io/gorm"
+)
 
 func (db *DB) CreateOrUpdateUser(telegramID int64, username, firstName string) (*User, error) {
 	user := &User{}
@@ -92,3 +96,21 @@ func (db *DB) GetActiveFilters() ([]*UserFilter, error) {
 	return filters, err
 }
 
+func (db *DB) SaveListing(filterID uint, listing scraper.Listing) error {
+	savedListing := SavedListing{
+		FilterID: filterID,
+		URL:      listing.URL,
+		Title:    listing.Title,
+		Price:    listing.Price,
+		Location: listing.Location,
+	}
+
+	result := db.Where("url = ?", listing.URL).FirstOrCreate(&savedListing)
+	return result.Error
+}
+
+func (db *DB) GetExistingURLs(filterID uint) ([]string, error) {
+	var urls []string
+	err := db.Model(&SavedListing{}).Where("filter_id = ?", filterID).Pluck("url", &urls).Error
+	return urls, err
+}

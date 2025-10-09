@@ -31,6 +31,17 @@ type UserFilter struct {
 	User      User      `gorm:"foreignKey:UserID"`
 }
 
+type SavedListing struct {
+	ID        uint      `gorm:"primaryKey"`
+    FilterID  uint      `gorm:"index"`
+    URL       string    `gorm:"uniqueIndex"`
+    Title     string
+    Price     string
+    Location  string
+    CreatedAt time.Time `gorm:"autoCreateTime"`
+    UpdatedAt time.Time `gorm:"autoUpdateTime"`
+}
+
 type DB struct {
 	*gorm.DB
 }
