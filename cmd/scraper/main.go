@@ -50,7 +50,7 @@ func NewScraperService() (*ScraperService, error) {
 		db:            db,
 		consumer:      consumer,
 		producer:      producer,
-		scraper: olxScraper,
+		scraper:       olxScraper,
 		activeFilters: make(map[uint]*database.UserFilter),
 	}, nil
 }
@@ -223,10 +223,10 @@ func (s *ScraperService) scrapeFilter(filter *database.UserFilter) error {
 	log.Printf("Scraping filter: ID=%d, Query='%s'", filter.ID, filter.Query)
 
 	searchFilters := scraper.SearchFilters{
-		Query: filter.Query,
+		Query:    filter.Query,
 		MinPrice: filter.MinPrice,
 		MaxPrice: filter.MaxPrice,
-		City: filter.City,
+		City:     filter.City,
 	}
 
 	listings, err := s.scraper.SearchListings(searchFilters)
@@ -263,17 +263,18 @@ func (s *ScraperService) scrapeFilter(filter *database.UserFilter) error {
 	}
 
 	log.Printf("📈 Statistics for filter %d:", filter.ID)
-    log.Printf("    Total found: %d", len(listings))
-    log.Printf("    Already known: %d", len(listings)-len(newListings))
-    log.Printf("    New listings: %d", len(newListings))
+	log.Printf("    Total found: %d", len(listings))
+	log.Printf("    Already known: %d", len(listings)-len(newListings))
+	log.Printf("    New listings: %d", len(newListings))
 
 	if len(newListings) > 0 {
 		event := kafka.NewListingsEvent{
 			EventType: kafka.EventNewListings,
-			FilterID: int(filter.ID),
-			UserID: int64(filter.UserID),
-			Listings: newListings,
-			FoundAt: time.Now(),
+			FilterID:  filter.ID,
+			UserID:    filter.UserID,
+			Query:     filter.Query,
+			Listings:  newListings,
+			FoundAt:   time.Now(),
 		}
 
 		if err := s.producer.PublishNewListings(event); err != nil {
@@ -296,8 +297,8 @@ func (s *ScraperService) HandleFilterCreated(event kafka.FilterCreatedEvent) err
 	log.Printf("    City: '%s'", event.City)
 
 	filter := &database.UserFilter{
-		ID:       uint(event.FilterID),
-		UserID:   uint(event.UserID),
+		ID:       event.FilterID,
+		UserID:   event.UserID,
 		Query:    event.Query,
 		MinPrice: event.MinPrice,
 		MaxPrice: event.MaxPrice,
@@ -306,7 +307,7 @@ func (s *ScraperService) HandleFilterCreated(event kafka.FilterCreatedEvent) err
 	}
 
 	s.filtersMutex.Lock()
-	s.activeFilters[uint(event.FilterID)] = filter
+	s.activeFilters[event.FilterID] = filter
 	filterCount := len(s.activeFilters)
 	s.filtersMutex.Unlock()
 
@@ -344,4 +345,3 @@ func (s *ScraperService) HandleNewListings(event kafka.NewListingsEvent) error {
 		event.FilterID)
 	return nil
 }
-

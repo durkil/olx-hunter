@@ -3,6 +3,7 @@ package scraper
 import (
 	"fmt"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -26,6 +27,22 @@ type SearchFilters struct {
 
 type Scraper interface {
 	SearchListings(filters SearchFilters) ([]Listing, error)
+}
+
+// cleanText очищає текст від CSS, HTML та інших артефактів
+func cleanText(text string) string {
+	// Видаляємо CSS
+	cssRegex := regexp.MustCompile(`\.css-[^;]+;|\.css-[^}]+}`)
+	text = cssRegex.ReplaceAllString(text, "")
+
+	// Видаляємо CSS властивості
+	propertyRegex := regexp.MustCompile(`[a-zA-Z-]+:\s*[^;]+;`)
+	text = propertyRegex.ReplaceAllString(text, "")
+
+	// Видаляємо зайві пробіли та переводи рядків
+	text = regexp.MustCompile(`\s+`).ReplaceAllString(text, " ")
+
+	return strings.TrimSpace(text)
 }
 
 type OLXScraper struct {
@@ -71,10 +88,10 @@ func (s *OLXScraper) SearchListings(filters SearchFilters) ([]Listing, error) {
 
 			listing := Listing{
 				URL:      fullURL,
-				Title:    strings.TrimSpace(title),
-				Price:    strings.TrimSpace(priceText),
+				Title:    cleanText(title),
+				Price:    cleanText(priceText),
 				PriceInt: parsePrice(priceText),
-				Location: strings.TrimSpace(location),
+				Location: cleanText(location),
 			}
 
 			if filters.MinPrice > 0 && listing.PriceInt < filters.MinPrice {

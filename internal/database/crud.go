@@ -114,3 +114,12 @@ func (db *DB) GetExistingURLs(filterID uint) ([]string, error) {
 	err := db.Model(&SavedListing{}).Where("filter_id = ?", filterID).Pluck("url", &urls).Error
 	return urls, err
 }
+
+func (db *DB) GetFilterWithUser(filterID, userID uint) (*UserFilter, error) {
+	var filter UserFilter
+	err := db.Preload("User").Where("id = ? AND user_id = ?", filterID, userID).First(&filter).Error
+	if err == gorm.ErrRecordNotFound {
+		return nil, nil
+	}
+	return &filter, err
+}

@@ -11,6 +11,7 @@ import (
 	"olx-hunter/internal/database"
 	"olx-hunter/internal/kafka"
 	"olx-hunter/internal/scraper"
+	"olx-hunter/internal/utils"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
@@ -258,12 +259,12 @@ func (b *Bot) handleText(message *tgbotapi.Message) {
 
 		kafkaEvent := kafka.FilterCreatedEvent{
 			EventType: kafka.EventFilterCreated,
-			UserID:    user.TelegramID,
+			UserID:    uint(user.TelegramID),
 			FilterID:  createdFilter.ID,
 			Query:     createdFilter.Query,
-			MinPrice: createdFilter.MinPrice,
-			MaxPrice: createdFilter.MaxPrice,
-			City: createdFilter.City,
+			MinPrice:  createdFilter.MinPrice,
+			MaxPrice:  createdFilter.MaxPrice,
+			City:      createdFilter.City,
 			CreatedAt: time.Now(),
 		}
 
@@ -468,4 +469,60 @@ func (b *Bot) sendSearchResults(chatID int64, filterName string, listings []scra
 	}
 
 	b.sendMessage(chatID, text)
+}
+
+func (b *Bot) HandleNewListings(event kafka.NewListingsEvent) error {
+	log.Printf("Received new_listings event: FilterID=%d, UserID=%d, Count=%d",
+		event.FilterID, event.UserID, len(event.Listings))
+
+	filter, err := b.db.GetFilterWithUser(event.FilterID, event.UserID)
+	if err != nil {
+		log.Printf("Failed to get filter with user: %v", err)
+		return err
+	}
+
+	if filter == nil {
+		log.Printf("❌ Filter %d not found for user %d", event.FilterID, event.UserID)
+		return fmt.Errorf("filter not found")
+	}
+
+	// Використовуємо TelegramID з таблиці User, а не UserID з таблиці UserFilter
+	telegramChatID := filter.User.TelegramID
+
+	text := "🚨 **Нові оголошення!**\n\n"
+	text += fmt.Sprintf("🔍 Фільтр: **%s**\n", filter.Name)
+	text += fmt.Sprintf("📊 Знайдено: **%d нових** оголошень\n\n", len(event.Listings))
+
+	for i, listing := range event.Listings {
+		if i >= 3 {
+			break
+		}
+
+		text += fmt.Sprintf("🆕 **%d.** %s\n", i+1, listing.Title)
+		text += fmt.Sprintf("💰 %s\n", listing.Price)
+
+		adjustedTime := utils.AdjustedTimeToKyiv(listing.Location)
+		text += fmt.Sprintf("📍 %v\n", adjustedTime)
+		text += fmt.Sprintf("🔗 %s\n\n", listing.URL)
+	}
+
+	if len(event.Listings) > 3 {
+		text += fmt.Sprintf("➕ ... і ще **%d** оголошень\n\n", len(event.Listings)-3)
+	}
+
+	text += "🔔 Щоб переглянути всі - використай `/find`"
+
+	b.sendMessage(telegramChatID, text)
+
+	log.Printf("✅ Sent notification to user %d (TelegramID: %d) about %d new listings", event.UserID, telegramChatID, len(event.Listings))
+
+	return nil
+}
+
+func (b *Bot) HandleFilterCreated(event kafka.FilterCreatedEvent) error {
+	return nil
+}
+
+func (b *Bot) HandleScrapeRequest(event kafka.ScrapeRequestEvent) error {
+	return nil
 }

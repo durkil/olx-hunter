@@ -13,7 +13,7 @@ const (
 
 type FilterCreatedEvent struct {
 	EventType string    `json:"event_type"`
-	UserID    int64     `json:"user_id"`
+	UserID    uint      `json:"user_id"`
 	FilterID  uint      `json:"filter_id"`
 	Query     string    `json:"query"`
 	MinPrice  int       `json:"min_price"`
@@ -29,8 +29,8 @@ type ScrapeRequestEvent struct {
 
 type NewListingsEvent struct {
 	EventType string            `json:"event_type"`
-	FilterID  int               `json:"filter_id"`
-	UserID    int64             `json:"user_id"`
+	FilterID  uint              `json:"filter_id"`
+	UserID    uint              `json:"user_id"`
 	Query     string            `json:"query"`
 	Listings  []scraper.Listing `json:"listings"`
 	FoundAt   time.Time         `json:"found_at"`
