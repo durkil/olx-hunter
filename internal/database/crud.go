@@ -123,3 +123,17 @@ func (db *DB) GetFilterWithUser(filterID, userID uint) (*UserFilter, error) {
 	}
 	return &filter, err
 }
+
+func (db *DB) IsListingNotified(url string) (bool, error) {
+	var savedListing SavedListing
+	err := db.Where("url = ?", url).Select("is_notified").First(&savedListing).Error
+	if err == gorm.ErrRecordNotFound {
+		return false, nil
+	} else {
+		return savedListing.IsNotified, nil
+	}
+}
+
+func (db *DB) MarkListingAsNotified(url string) error {
+	return db.Model(&SavedListing{}).Where("url = ?", url).Update("is_notified", true).Error
+}

@@ -514,6 +514,13 @@ func (b *Bot) HandleNewListings(event kafka.NewListingsEvent) error {
 
 	b.sendMessage(telegramChatID, text)
 
+	for _, listing := range event.Listings {
+		if err := b.db.MarkListingAsNotified(listing.URL); err != nil {
+			log.Printf("Failed to mark listing as notified %s: %v", listing.URL, err)
+		}
+	}
+	log.Printf("✅ Marked %d listings as notified", len(event.Listings))
+
 	log.Printf("✅ Sent notification to user %d (TelegramID: %d) about %d new listings", event.UserID, telegramChatID, len(event.Listings))
 
 	return nil

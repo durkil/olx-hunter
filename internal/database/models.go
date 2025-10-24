@@ -32,14 +32,15 @@ type UserFilter struct {
 }
 
 type SavedListing struct {
-	ID        uint      `gorm:"primaryKey"`
-	FilterID  uint      `gorm:"index"`
-	URL       string    `gorm:"uniqueIndex;size:500"`
-	Title     string    `gorm:"size:300"`
-	Price     string    `gorm:"size:500"`
-	Location  string    `gorm:"size:200"`
-	CreatedAt time.Time `gorm:"autoCreateTime"`
-	UpdatedAt time.Time `gorm:"autoUpdateTime"`
+	ID         uint      `gorm:"primaryKey"`
+	FilterID   uint      `gorm:"index"`
+	URL        string    `gorm:"uniqueIndex;size:500"`
+	Title      string    `gorm:"size:300"`
+	Price      string    `gorm:"size:500"`
+	Location   string    `gorm:"size:200"`
+	CreatedAt  time.Time `gorm:"autoCreateTime"`
+	UpdatedAt  time.Time `gorm:"autoUpdateTime"`
+	IsNotified bool      `gorm:"default:false;index"`
 }
 
 type DB struct {

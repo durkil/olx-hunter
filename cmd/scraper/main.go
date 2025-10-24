@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -262,25 +263,38 @@ func (s *ScraperService) scrapeFilter(filter *database.UserFilter) error {
 		}
 	}
 
+	var notifiableListings []scraper.Listing
+	for _, listing := range newListings {
+		isNotified, err := s.db.IsListingNotified(listing.URL)
+		if err != nil {
+			log.Printf("Error checking is_notified for %s: %v", listing.URL, err)
+		}
+		if !isNotified {
+			notifiableListings = append(notifiableListings, listing)
+		}
+	}
+
 	log.Printf("📈 Statistics for filter %d:", filter.ID)
 	log.Printf("    Total found: %d", len(listings))
 	log.Printf("    Already known: %d", len(listings)-len(newListings))
 	log.Printf("    New listings: %d", len(newListings))
+	log.Printf("    Already notified: %d", len(newListings)-len(notifiableListings))
+	log.Printf("    Ready to notify: %d", len(notifiableListings))	
 
-	if len(newListings) > 0 {
+	if len(notifiableListings) > 0 {
 		event := kafka.NewListingsEvent{
 			EventType: kafka.EventNewListings,
 			FilterID:  filter.ID,
 			UserID:    filter.UserID,
 			Query:     filter.Query,
-			Listings:  newListings,
+			Listings:  notifiableListings,
 			FoundAt:   time.Now(),
 		}
 
 		if err := s.producer.PublishNewListings(event); err != nil {
 			log.Printf("Failed to publish new_listings event: %v", err)
 		} else {
-			log.Printf("Published new_listings event: %d new items for filter %d", len(newListings), filter.ID)
+			log.Printf("Published new_listings event: %d new items for filter %d", len(notifiableListings), filter.ID)
 		}
 	}
 
@@ -344,4 +358,19 @@ func (s *ScraperService) HandleNewListings(event kafka.NewListingsEvent) error {
 	log.Printf("Received new_listings event (FilterID=%d) - ignoring (for notification service)",
 		event.FilterID)
 	return nil
+}
+
+func IsListingFresh(location string) bool {
+	freshIndicators := []string{
+		"Сьогодні о",
+		"Вчора о",
+	}
+
+	locationLower := strings.ToLower(location)
+	for _, indicator := range freshIndicators {
+		if strings.Contains(locationLower, strings.ToLower(indicator)) {
+			return true
+		}
+	}
+	return false
 }
