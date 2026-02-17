@@ -1,95 +1,37 @@
-package main
+package scraper
 
 import (
 	"context"
 	"fmt"
 	"log"
-	"os"
-	"os/signal"
 	"sync"
-	"syscall"
 	"time"
 
 	"olx-hunter/internal/database"
-	"olx-hunter/internal/scraper"
+	"olx-hunter/internal/models"
 )
 
 type ScraperService struct {
 	db       *database.DB
-	scraper  *scraper.OLXScraper
+	scraper  *OLXScraper
 
 	activeFilters map[uint]*database.UserFilter
 	filtersMutex  sync.RWMutex
 }
 
-func NewScraperService() (*ScraperService, error) {
-	log.Println("Initializing Scraper Service components...")
-
-	dsn := "host=localhost user=postgres password=password dbname=olx_hunter port=5432 sslmode=disable"
-	db, err := database.Connect(dsn)
-
-	if err != nil {
-		log.Printf("Failed to connect to database: %v", err)
-		return nil, err
-	}
-	log.Println("Database connected")
-
-	olxScraper := scraper.NewOLXScraper()
-	log.Println("OLX scraper created")
-
+func NewScraperService(db *database.DB) *ScraperService {
 	return &ScraperService{
 		db:            db,
-		scraper:       olxScraper,
+		scraper:       NewOLXScraper(),
 		activeFilters: make(map[uint]*database.UserFilter),
-	}, nil
+	}
 }
 
-func main() {
-	log.Println("Starting OLX Hunter Scraper Service...")
-
-	service, err := NewScraperService()
-	if err != nil {
-		log.Fatalf("Failed to create scraper service: %v", err)
-	}
-
-	defer service.cleanup()
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	log.Println("Loading existing filters...")
-	if err := service.loadExistingFilters(); err != nil {
-		log.Printf("Failed to load existing filters: %v", err)
-	}
-
-	go func() {
-		log.Println("Starting periodic scraper...")
-		service.startPeriodicScraping(ctx)
-		log.Println("Periodic scraper stopped")
-	}()
-
-	log.Println("✅ Scraper Service is running!")
-	log.Println("⏰ Periodic scraping every 5 minutes")
-	log.Println("Press Ctrl+C to stop...")
-
-	c := make(chan os.Signal, 1)
-
-	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
-	<-c
-
-	log.Println("Shutdown signal received, stopping Scraper Service")
-
-	cancel()
-
-	time.Sleep(2 * time.Second)
-	log.Println("Scraper Service stopped gracefully")
-}
-
-func (s *ScraperService) cleanup() {
+func (s *ScraperService) Cleanup() {
 	log.Println("Cleanup completed")
 }
 
-func (s *ScraperService) loadExistingFilters() error {
+func (s *ScraperService) LoadExistingFilters() error {
 	log.Println("Load existing filters from database...")
 
 	filters, err := s.db.GetActiveFilters()
@@ -110,7 +52,7 @@ func (s *ScraperService) loadExistingFilters() error {
 	return nil
 }
 
-func (s *ScraperService) startPeriodicScraping(ctx context.Context) {
+func (s *ScraperService) StartPeriodicScraping(ctx context.Context) {
 	ticker := time.NewTicker(1 * time.Minute)
 	defer ticker.Stop()
 
@@ -184,7 +126,7 @@ func (s *ScraperService) scrapeAllFilters() {
 func (s *ScraperService) scrapeFilter(filter *database.UserFilter) error {
 	log.Printf("Scraping filter: ID=%d, Query='%s'", filter.ID, filter.Query)
 
-	searchFilters := scraper.SearchFilters{
+	searchFilters := models.SearchFilters{
 		Query:    filter.Query,
 		MinPrice: filter.MinPrice,
 		MaxPrice: filter.MaxPrice,
@@ -213,7 +155,7 @@ func (s *ScraperService) scrapeFilter(filter *database.UserFilter) error {
 		existingMap[url] = true
 	}
 
-	var newListings []scraper.Listing
+	var newListings []models.Listing
 	for _, listing := range listings {
 		if !existingMap[listing.URL] {
 			newListings = append(newListings, listing)
@@ -224,7 +166,7 @@ func (s *ScraperService) scrapeFilter(filter *database.UserFilter) error {
 		}
 	}
 
-	var notifiableListings []scraper.Listing
+	var notifiableListings []models.Listing
 	for _, listing := range newListings {
 		isNotified, err := s.db.IsListingNotified(listing.URL)
 		if err != nil {

@@ -8,6 +8,7 @@ import (
 
 	"olx-hunter/internal/cache"
 	"olx-hunter/internal/database"
+	"olx-hunter/internal/models"
 	"olx-hunter/internal/scraper"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
@@ -406,7 +407,7 @@ func (b *Bot) handleFind(message *tgbotapi.Message) {
 	b.sendMessage(message.Chat.ID, "🔍 Шукаю оголошення по твоїх фільтрах...")
 
 	olxScraper := scraper.NewOLXScraper()
-	searchFilters := scraper.SearchFilters{
+	searchFilters := models.SearchFilters{
 		Query:    selectedFilter.Query,
 		MinPrice: selectedFilter.MinPrice,
 		MaxPrice: selectedFilter.MaxPrice,
@@ -425,7 +426,7 @@ func (b *Bot) handleFind(message *tgbotapi.Message) {
 	b.sendSearchResults(message.Chat.ID, selectedFilter.Name, listings)
 }
 
-func (b *Bot) sendSearchResults(chatID int64, filterName string, listings []scraper.Listing) {
+func (b *Bot) sendSearchResults(chatID int64, filterName string, listings []models.Listing) {
 	if len(listings) == 0 {
 		b.sendMessage(chatID, "😔 Оголошень не знайдено")
 		return
@@ -447,9 +448,3 @@ func (b *Bot) sendSearchResults(chatID int64, filterName string, listings []scra
 
 	b.sendMessage(chatID, text)
 }
-
-
-
-
-
-

@@ -1,8 +1,8 @@
 package database
 
 import (
-	"olx-hunter/internal/scraper"
 
+	"olx-hunter/internal/models"
 	"gorm.io/gorm"
 )
 
@@ -96,7 +96,7 @@ func (db *DB) GetActiveFilters() ([]*UserFilter, error) {
 	return filters, err
 }
 
-func (db *DB) SaveListing(filterID uint, listing scraper.Listing) error {
+func (db *DB) SaveListing(filterID uint, listing models.Listing) error {
 	savedListing := SavedListing{
 		FilterID: filterID,
 		URL:      listing.URL,
