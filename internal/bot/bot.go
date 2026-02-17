@@ -5,13 +5,10 @@ import (
 	"log"
 	"strconv"
 	"strings"
-	"time"
 
 	"olx-hunter/internal/cache"
 	"olx-hunter/internal/database"
-	"olx-hunter/internal/kafka"
 	"olx-hunter/internal/scraper"
-	"olx-hunter/internal/utils"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
@@ -20,7 +17,6 @@ type Bot struct {
 	api           *tgbotapi.BotAPI
 	db            *database.DB
 	cache         *cache.RedisCache
-	kafkaProducer *kafka.Producer
 }
 
 type FilterCreationState struct {
@@ -47,16 +43,12 @@ func NewBot(token string, db *database.DB) (*Bot, error) {
 		log.Printf("Redis connected successfully")
 	}
 
-	kafkaProducer := kafka.NewProducer()
-	log.Printf("Kafka producer initialized")
-
 	log.Printf("Bot is authorized as: @%s", api.Self.UserName)
 
 	return &Bot{
 		api:           api,
 		db:            db,
 		cache:         redisCache,
-		kafkaProducer: kafkaProducer,
 	}, nil
 }
 
@@ -220,7 +212,7 @@ func (b *Bot) handleText(message *tgbotapi.Message) {
 		}
 
 		maxPrice := 0
-		if maxPriceStr != "0" && minPriceStr != "" {
+		if maxPriceStr != "0" && maxPriceStr != "" {
 			var err error
 			maxPrice, err = strconv.Atoi(maxPriceStr)
 			if err != nil {
@@ -255,21 +247,6 @@ func (b *Bot) handleText(message *tgbotapi.Message) {
 			b.sendMessage(message.Chat.ID, "❌ Помилка створення фільтру. Спробуй ще раз.")
 			delete(creationStates, message.From.ID)
 			return
-		}
-
-		kafkaEvent := kafka.FilterCreatedEvent{
-			EventType: kafka.EventFilterCreated,
-			UserID:    uint(user.TelegramID),
-			FilterID:  createdFilter.ID,
-			Query:     createdFilter.Query,
-			MinPrice:  createdFilter.MinPrice,
-			MaxPrice:  createdFilter.MaxPrice,
-			City:      createdFilter.City,
-			CreatedAt: time.Now(),
-		}
-
-		if err := b.kafkaProducer.PublishFilterCreated(kafkaEvent); err != nil {
-			log.Printf("Failed to publish filter_created event to Kafka: %v", err)
 		}
 
 		successText := fmt.Sprintf(`✅ Фільтр створено успішно!
@@ -471,65 +448,8 @@ func (b *Bot) sendSearchResults(chatID int64, filterName string, listings []scra
 	b.sendMessage(chatID, text)
 }
 
-func (b *Bot) HandleNewListings(event kafka.NewListingsEvent) error {
-	log.Printf("Received new_listings event: FilterID=%d, UserID=%d, Count=%d",
-		event.FilterID, event.UserID, len(event.Listings))
 
-	filter, err := b.db.GetFilterWithUser(event.FilterID, event.UserID)
-	if err != nil {
-		log.Printf("Failed to get filter with user: %v", err)
-		return err
-	}
 
-	if filter == nil {
-		log.Printf("❌ Filter %d not found for user %d", event.FilterID, event.UserID)
-		return fmt.Errorf("filter not found")
-	}
 
-	// Використовуємо TelegramID з таблиці User, а не UserID з таблиці UserFilter
-	telegramChatID := filter.User.TelegramID
 
-	text := "🚨 **Нові оголошення!**\n\n"
-	text += fmt.Sprintf("🔍 Фільтр: **%s**\n", filter.Name)
-	text += fmt.Sprintf("📊 Знайдено: **%d нових** оголошень\n\n", len(event.Listings))
 
-	for i, listing := range event.Listings {
-		if i >= 3 {
-			break
-		}
-
-		text += fmt.Sprintf("🆕 **%d.** %s\n", i+1, listing.Title)
-		text += fmt.Sprintf("💰 %s\n", listing.Price)
-
-		adjustedTime := utils.AdjustedTimeToKyiv(listing.Location)
-		text += fmt.Sprintf("📍 %v\n", adjustedTime)
-		text += fmt.Sprintf("🔗 %s\n\n", listing.URL)
-	}
-
-	if len(event.Listings) > 3 {
-		text += fmt.Sprintf("➕ ... і ще **%d** оголошень\n\n", len(event.Listings)-3)
-	}
-
-	text += "🔔 Щоб переглянути всі - використай `/find`"
-
-	b.sendMessage(telegramChatID, text)
-
-	for _, listing := range event.Listings {
-		if err := b.db.MarkListingAsNotified(listing.URL); err != nil {
-			log.Printf("Failed to mark listing as notified %s: %v", listing.URL, err)
-		}
-	}
-	log.Printf("✅ Marked %d listings as notified", len(event.Listings))
-
-	log.Printf("✅ Sent notification to user %d (TelegramID: %d) about %d new listings", event.UserID, telegramChatID, len(event.Listings))
-
-	return nil
-}
-
-func (b *Bot) HandleFilterCreated(event kafka.FilterCreatedEvent) error {
-	return nil
-}
-
-func (b *Bot) HandleScrapeRequest(event kafka.ScrapeRequestEvent) error {
-	return nil
-}

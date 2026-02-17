@@ -6,20 +6,16 @@ import (
 	"log"
 	"os"
 	"os/signal"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
 
 	"olx-hunter/internal/database"
-	"olx-hunter/internal/kafka"
 	"olx-hunter/internal/scraper"
 )
 
 type ScraperService struct {
 	db       *database.DB
-	consumer *kafka.Consumer
-	producer *kafka.Producer
 	scraper  *scraper.OLXScraper
 
 	activeFilters map[uint]*database.UserFilter
@@ -38,19 +34,11 @@ func NewScraperService() (*ScraperService, error) {
 	}
 	log.Println("Database connected")
 
-	consumer := kafka.NewConsumer("scraper-service")
-	log.Println("Kafka consumer created")
-
-	producer := kafka.NewProducer()
-	log.Println("Kafka producer created")
-
 	olxScraper := scraper.NewOLXScraper()
 	log.Println("OLX scraper created")
 
 	return &ScraperService{
 		db:            db,
-		consumer:      consumer,
-		producer:      producer,
 		scraper:       olxScraper,
 		activeFilters: make(map[uint]*database.UserFilter),
 	}, nil
@@ -75,21 +63,12 @@ func main() {
 	}
 
 	go func() {
-		log.Println("Starting Kafka consumer...")
-		if err := service.consumer.ProcessEvents(ctx, service); err != nil {
-			log.Printf("Consumer error: %v", err)
-		}
-		log.Println("Kafka consumer stopped")
-	}()
-
-	go func() {
 		log.Println("Starting periodic scraper...")
 		service.startPeriodicScraping(ctx)
 		log.Println("Periodic scraper stopped")
 	}()
 
 	log.Println("✅ Scraper Service is running!")
-	log.Println("📡 Listening for Kafka events...")
 	log.Println("⏰ Periodic scraping every 5 minutes")
 	log.Println("Press Ctrl+C to stop...")
 
@@ -107,24 +86,6 @@ func main() {
 }
 
 func (s *ScraperService) cleanup() {
-	log.Println("Cleaning up resources...")
-
-	if s.consumer != nil {
-		if err := s.consumer.Close(); err != nil {
-			log.Printf("Error closing consumer: %v", err)
-		} else {
-			log.Println("Kafka consumer closed")
-		}
-	}
-
-	if s.producer != nil {
-		if err := s.producer.Close(); err != nil {
-			log.Printf("Error closing producer: %v", err)
-		} else {
-			log.Println("Kafka producer closed")
-		}
-	}
-
 	log.Println("Cleanup completed")
 }
 
@@ -150,7 +111,7 @@ func (s *ScraperService) loadExistingFilters() error {
 }
 
 func (s *ScraperService) startPeriodicScraping(ctx context.Context) {
-	ticker := time.NewTicker(5 * time.Minute)
+	ticker := time.NewTicker(1 * time.Minute)
 	defer ticker.Stop()
 
 	log.Println("Wating 30 seconds before first scraping...")
@@ -279,98 +240,7 @@ func (s *ScraperService) scrapeFilter(filter *database.UserFilter) error {
 	log.Printf("    Already known: %d", len(listings)-len(newListings))
 	log.Printf("    New listings: %d", len(newListings))
 	log.Printf("    Already notified: %d", len(newListings)-len(notifiableListings))
-	log.Printf("    Ready to notify: %d", len(notifiableListings))	
-
-	if len(notifiableListings) > 0 {
-		event := kafka.NewListingsEvent{
-			EventType: kafka.EventNewListings,
-			FilterID:  filter.ID,
-			UserID:    filter.UserID,
-			Query:     filter.Query,
-			Listings:  notifiableListings,
-			FoundAt:   time.Now(),
-		}
-
-		if err := s.producer.PublishNewListings(event); err != nil {
-			log.Printf("Failed to publish new_listings event: %v", err)
-		} else {
-			log.Printf("Published new_listings event: %d new items for filter %d", len(notifiableListings), filter.ID)
-		}
-	}
+	log.Printf("    Ready to notify: %d", len(notifiableListings))
 
 	return nil
-}
-
-func (s *ScraperService) HandleFilterCreated(event kafka.FilterCreatedEvent) error {
-	log.Printf("🆕 Received filter_created event:")
-	log.Printf("    FilterID: %d", event.FilterID)
-	log.Printf("    UserID: %d", event.UserID)
-	log.Printf("    Query: '%s'", event.Query)
-	log.Printf("    MinPrice: %d", event.MinPrice)
-	log.Printf("    MaxPrice: %d", event.MaxPrice)
-	log.Printf("    City: '%s'", event.City)
-
-	filter := &database.UserFilter{
-		ID:       event.FilterID,
-		UserID:   event.UserID,
-		Query:    event.Query,
-		MinPrice: event.MinPrice,
-		MaxPrice: event.MaxPrice,
-		City:     event.City,
-		IsActive: true,
-	}
-
-	s.filtersMutex.Lock()
-	s.activeFilters[event.FilterID] = filter
-	filterCount := len(s.activeFilters)
-	s.filtersMutex.Unlock()
-
-	log.Printf("Added filter %d to active monitoring", event.FilterID)
-	log.Printf("Total active filters: %d", filterCount)
-
-	go func() {
-		log.Printf("Starting immediate scraping for new filter %d...", filter.ID)
-		time.Sleep(5 * time.Second)
-
-		if err := s.scrapeFilter(filter); err != nil {
-			log.Printf(" Error in immediate scraping of filter %d: %v", filter.ID, err)
-		} else {
-			log.Printf("Immediate scraping completed for filter %d", filter.ID)
-		}
-	}()
-
-	return nil
-}
-
-func (s *ScraperService) HandleScrapeRequest(event kafka.ScrapeRequestEvent) error {
-	log.Printf("Received scrape_request event - triggering manual scraping")
-
-	go func() {
-		log.Println("Starting manual scraping session...")
-		s.scrapeAllFilters()
-		log.Println("Manual scraping session completed")
-	}()
-
-	return nil
-}
-
-func (s *ScraperService) HandleNewListings(event kafka.NewListingsEvent) error {
-	log.Printf("Received new_listings event (FilterID=%d) - ignoring (for notification service)",
-		event.FilterID)
-	return nil
-}
-
-func IsListingFresh(location string) bool {
-	freshIndicators := []string{
-		"Сьогодні о",
-		"Вчора о",
-	}
-
-	locationLower := strings.ToLower(location)
-	for _, indicator := range freshIndicators {
-		if strings.Contains(locationLower, strings.ToLower(indicator)) {
-			return true
-		}
-	}
-	return false
 }

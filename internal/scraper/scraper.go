@@ -67,7 +67,7 @@ func parsePrice(priceStr string) int {
 }
 
 func (s *OLXScraper) SearchListings(filters SearchFilters) ([]Listing, error) {
-	searchURL := fmt.Sprintf("https://www.olx.ua/uk/list/q-%s/", filters.Query)
+	searchURL := fmt.Sprintf("https://www.olx.ua/uk/list/q-%s/?search[order]=created_at:desc", filters.Query)
 
 	c := colly.NewCollector()
 

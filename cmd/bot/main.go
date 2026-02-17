@@ -1,13 +1,11 @@
 package main
 
 import (
-	"context"
 	"log"
     "os"
 
     "olx-hunter/internal/bot"
     "olx-hunter/internal/database"
-	"olx-hunter/internal/kafka"
 	"github.com/joho/godotenv"
 )
 
@@ -32,17 +30,6 @@ func main() {
 	if err != nil {
 		log.Fatal("Error creating bot:", err)
 	}
-
-	go func ()  {
-		log.Println("🔔 Starting Bot Kafka consumer for notifications...")
-		
-		consumer := kafka.NewConsumer("bot-notification-service")
-		ctx := context.Background()
-
-		if err := consumer.ProcessEvents(ctx, telegramBot); err != nil {
-			log.Printf("❌ Bot Kafka consumer error: %v", err)
-		}
-	}()
 
 	log.Println("🤖 Starting Telegram Bot...")
 	telegramBot.Start()
