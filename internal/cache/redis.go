@@ -15,11 +15,11 @@ type RedisCache struct {
 	ctx    context.Context
 }
 
-func NewRedisCache() *RedisCache {
+func NewRedisCache(addr string) *RedisCache {
 	client := redis.NewClient(&redis.Options{
-		Addr: "localhost:6379",
+		Addr:     addr,
 		Password: "",
-		DB: 0,
+		DB:       0,
 	})
 
 	return &RedisCache{

@@ -13,25 +13,30 @@ import (
 )
 
 type ScraperService struct {
-	db          *database.DB
-	scraper     *OLXScraper
-	notifyCh    chan<- models.Notification
-	workerCount int
+	db             *database.DB
+	scraper        *OLXScraper
+	notifyCh       chan<- models.Notification
+	workerCount    int
+	scrapeInterval time.Duration
 
 	activeFilters map[uint]*database.UserFilter
 	filtersMutex  sync.RWMutex
 }
 
-func NewScraperService(db *database.DB, notifyCh chan<- models.Notification, workerCount int) *ScraperService {
+func NewScraperService(db *database.DB, notifyCh chan<- models.Notification, workerCount, scrapeIntervalSec int) *ScraperService {
 	if workerCount < 1 {
 		workerCount = 3
 	}
+	if scrapeIntervalSec < 30 {
+		scrapeIntervalSec = 60
+	}
 	return &ScraperService{
-		db:            db,
-		scraper:       NewOLXScraper(),
-		notifyCh:      notifyCh,
-		workerCount:   workerCount,
-		activeFilters: make(map[uint]*database.UserFilter),
+		db:             db,
+		scraper:        NewOLXScraper(),
+		notifyCh:       notifyCh,
+		workerCount:    workerCount,
+		scrapeInterval: time.Duration(scrapeIntervalSec) * time.Second,
+		activeFilters:  make(map[uint]*database.UserFilter),
 	}
 }
 
@@ -60,12 +65,31 @@ func (s *ScraperService) LoadExistingFilters() error {
 	return nil
 }
 
+func (s *ScraperService) AddFilter(filter *database.UserFilter) {
+	s.filtersMutex.Lock()
+	defer s.filtersMutex.Unlock()
+	s.activeFilters[filter.ID] = filter
+	log.Printf("Filter added to scraper: ID=%d, Query='%s'", filter.ID, filter.Query)
+}
+
+func (s *ScraperService) RemoveFilter(filterID uint) {
+	s.filtersMutex.Lock()
+	defer s.filtersMutex.Unlock()
+	delete(s.activeFilters, filterID)
+	log.Printf("Filter removed from scraper: ID=%d", filterID)
+}
+
 func (s *ScraperService) StartPeriodicScraping(ctx context.Context) {
-	ticker := time.NewTicker(1 * time.Minute)
+	ticker := time.NewTicker(s.scrapeInterval)
 	defer ticker.Stop()
 
-	log.Println("Wating 30 seconds before first scraping...")
-	time.Sleep(30 * time.Second)
+	log.Println("Waiting 30 seconds before first scraping...")
+	select {
+	case <-time.After(30 * time.Second):
+	case <-ctx.Done():
+		log.Println("Shutdown during initial delay")
+		return
+	}
 
 	log.Println("Starting initial scraping...")
 	s.scrapeAllFilters()

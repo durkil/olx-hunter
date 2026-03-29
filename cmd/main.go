@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"olx-hunter/internal/bot"
+	"olx-hunter/internal/config"
 	"olx-hunter/internal/database"
 	"olx-hunter/internal/models"
 	"olx-hunter/internal/scraper"
@@ -22,31 +23,30 @@ func main() {
 		log.Println("Env file is not found")
 	}
 
-	botToken := os.Getenv("BOT_TOKEN")
-	if botToken == "" {
-		log.Fatal("BOT_TOKEN is not set")
+	cfg, err := config.Load()
+	if err != nil {
+		log.Fatal("Config error:", err)
 	}
 
-	dsn := "host=localhost user=postgres password=password dbname=olx_hunter port=5432 sslmode=disable"
-	db, err := database.Connect(dsn)
+	db, err := database.Connect(cfg.DatabaseDSN)
 	if err != nil {
 		log.Fatal("Error connecting to db:", err)
 	}
-
-	telegramBot, err := bot.NewBot(botToken, db)
-	if err != nil {
-		log.Fatal("Error creating bot:", err)
-	}
-
-	log.Println("🤖 Starting Telegram Bot...")
 
 	log.Println("Starting OLX Hunter Scraper Service...")
 
 	notifyChan := make(chan models.Notification, 100)
 
-	scraperService := scraper.NewScraperService(db, notifyChan, 5)
+	scraperService := scraper.NewScraperService(db, notifyChan, cfg.WorkerCount, cfg.ScrapeInterval)
 	if err := scraperService.LoadExistingFilters(); err != nil {
 		log.Fatalf("Failed to load existing filters: %v", err)
+	}
+
+	log.Println("🤖 Starting Telegram Bot...")
+
+	telegramBot, err := bot.NewBot(cfg.BotToken, db, cfg.RedisAddr, scraperService)
+	if err != nil {
+		log.Fatal("Error creating bot:", err)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())

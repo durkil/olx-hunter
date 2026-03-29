@@ -15,9 +15,10 @@ import (
 )
 
 type Bot struct {
-	api   *tgbotapi.BotAPI
-	db    *database.DB
-	cache *cache.RedisCache
+	api     *tgbotapi.BotAPI
+	db      *database.DB
+	cache   *cache.RedisCache
+	scraper *scraper.ScraperService
 }
 
 type FilterCreationState struct {
@@ -27,7 +28,7 @@ type FilterCreationState struct {
 
 var creationStates = make(map[int64]*FilterCreationState)
 
-func NewBot(token string, db *database.DB) (*Bot, error) {
+func NewBot(token string, db *database.DB, redisAddr string, scraperService *scraper.ScraperService) (*Bot, error) {
 	api, err := tgbotapi.NewBotAPI(token)
 	if err != nil {
 		return nil, err
@@ -35,7 +36,7 @@ func NewBot(token string, db *database.DB) (*Bot, error) {
 
 	api.Debug = false
 
-	redisCache := cache.NewRedisCache()
+	redisCache := cache.NewRedisCache(redisAddr)
 
 	if err := redisCache.Ping(); err != nil {
 		log.Printf("Warning: Redis connection failed: %v", err)
@@ -47,9 +48,10 @@ func NewBot(token string, db *database.DB) (*Bot, error) {
 	log.Printf("Bot is authorized as: @%s", api.Self.UserName)
 
 	return &Bot{
-		api:   api,
-		db:    db,
-		cache: redisCache,
+		api:     api,
+		db:      db,
+		cache:   redisCache,
+		scraper: scraperService,
 	}, nil
 }
 
@@ -94,6 +96,10 @@ func (b *Bot) handleMessage(message *tgbotapi.Message) {
 			b.handleCreate(message)
 		case "find":
 			b.handleFind(message)
+		case "delete":
+			b.handleDelete(message)
+		case "toggle":
+			b.handleToggle(message)
 		default:
 			b.handleUnknown(message)
 		}
@@ -137,8 +143,9 @@ func (b *Bot) handleHelp(message *tgbotapi.Message) {
 🔍 Фільтри:
 /list - показати мої фільтри
 /create - створити новий фільтр (покроково)
-/find - знайти оголошення по конкретному фільтру
-/find [номер] - знайти по фільтру з номером
+/delete [номер] - видалити фільтр
+/toggle [номер] - увімкнути/вимкнути фільтр
+/find [номер] - знайти оголошення по фільтру
 
 💡 Підказка: введи "-" щоб пропустити необов'язкові поля (ціна, місто)`
 
@@ -273,6 +280,13 @@ func (b *Bot) handleText(message *tgbotapi.Message) {
 		}
 
 		successText += "\n\n🟢 Фільтр активний і готовий до роботи!"
+
+		if b.scraper != nil {
+			filterWithUser, _ := b.db.GetFilterWithUser(createdFilter.ID, user.ID)
+			if filterWithUser != nil {
+				b.scraper.AddFilter(filterWithUser)
+			}
+		}
 
 		b.sendMessage(message.Chat.ID, successText)
 		delete(creationStates, message.From.ID)
@@ -424,6 +438,109 @@ func (b *Bot) handleFind(message *tgbotapi.Message) {
 	b.cache.CacheSearchResults(cacheKey, listings)
 
 	b.sendSearchResults(message.Chat.ID, selectedFilter.Name, listings)
+}
+
+func (b *Bot) handleDelete(message *tgbotapi.Message) {
+	user, err := b.db.GetUserByTelegramID(message.From.ID)
+	if err != nil || user == nil {
+		b.sendMessage(message.Chat.ID, "❌ Помилка отримання даних користувача")
+		return
+	}
+
+	filters, err := b.db.GetUserFilters(user.ID)
+	if err != nil || len(filters) == 0 {
+		b.sendMessage(message.Chat.ID, "📝 У тебе немає фільтрів для видалення.")
+		return
+	}
+
+	args := strings.Fields(message.CommandArguments())
+	if len(args) == 0 {
+		text := "🗑 Вкажи номер фільтра для видалення:\n\n"
+		for i, f := range filters {
+			text += fmt.Sprintf("%d. %s - `%s`\n", i+1, f.Name, f.Query)
+		}
+		text += "\n📝 Використання: /delete 1"
+		b.sendMessage(message.Chat.ID, text)
+		return
+	}
+
+	num, err := strconv.Atoi(args[0])
+	if err != nil || num < 1 || num > len(filters) {
+		b.sendMessage(message.Chat.ID, fmt.Sprintf("❌ Невірний номер. Використай від 1 до %d", len(filters)))
+		return
+	}
+
+	selected := filters[num-1]
+	if err := b.db.DeleteFilter(selected.ID, user.ID); err != nil {
+		log.Printf("Error deleting filter: %v", err)
+		b.sendMessage(message.Chat.ID, "❌ Помилка видалення фільтру")
+		return
+	}
+
+	if b.scraper != nil {
+		b.scraper.RemoveFilter(selected.ID)
+	}
+
+	b.sendMessage(message.Chat.ID, fmt.Sprintf("✅ Фільтр \"%s\" видалено!", selected.Name))
+}
+
+func (b *Bot) handleToggle(message *tgbotapi.Message) {
+	user, err := b.db.GetUserByTelegramID(message.From.ID)
+	if err != nil || user == nil {
+		b.sendMessage(message.Chat.ID, "❌ Помилка отримання даних користувача")
+		return
+	}
+
+	filters, err := b.db.GetUserFilters(user.ID)
+	if err != nil || len(filters) == 0 {
+		b.sendMessage(message.Chat.ID, "📝 У тебе немає фільтрів.")
+		return
+	}
+
+	args := strings.Fields(message.CommandArguments())
+	if len(args) == 0 {
+		text := "🔄 Вкажи номер фільтра для вмикання/вимикання:\n\n"
+		for i, f := range filters {
+			status := "🟢"
+			if !f.IsActive {
+				status = "🔴"
+			}
+			text += fmt.Sprintf("%s %d. %s - `%s`\n", status, i+1, f.Name, f.Query)
+		}
+		text += "\n📝 Використання: /toggle 1"
+		b.sendMessage(message.Chat.ID, text)
+		return
+	}
+
+	num, err := strconv.Atoi(args[0])
+	if err != nil || num < 1 || num > len(filters) {
+		b.sendMessage(message.Chat.ID, fmt.Sprintf("❌ Невірний номер. Використай від 1 до %d", len(filters)))
+		return
+	}
+
+	selected := filters[num-1]
+	if err := b.db.ToggleFilter(selected.ID, user.ID); err != nil {
+		log.Printf("Error toggling filter: %v", err)
+		b.sendMessage(message.Chat.ID, "❌ Помилка зміни статусу фільтру")
+		return
+	}
+
+	if b.scraper != nil {
+		if selected.IsActive {
+			b.scraper.RemoveFilter(selected.ID)
+		} else {
+			filterWithUser, _ := b.db.GetFilterWithUser(selected.ID, user.ID)
+			if filterWithUser != nil {
+				b.scraper.AddFilter(filterWithUser)
+			}
+		}
+	}
+
+	newStatus := "🟢 активний"
+	if selected.IsActive {
+		newStatus = "🔴 неактивний"
+	}
+	b.sendMessage(message.Chat.ID, fmt.Sprintf("✅ Фільтр \"%s\" тепер %s", selected.Name, newStatus))
 }
 
 func (b *Bot) ListenNotifications(notifyCh <-chan models.Notification) {
