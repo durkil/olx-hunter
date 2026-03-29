@@ -5,6 +5,8 @@ import (
 	"log"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 
 	"olx-hunter/internal/cache"
 	"olx-hunter/internal/database"
@@ -19,6 +21,10 @@ type Bot struct {
 	db      *database.DB
 	cache   *cache.RedisCache
 	scraper *scraper.ScraperService
+
+	pendingNotifications map[string][]models.Listing
+	notifMutex           sync.Mutex
+	notifCounter         int64
 }
 
 type FilterCreationState struct {
@@ -48,10 +54,11 @@ func NewBot(token string, db *database.DB, redisAddr string, scraperService *scr
 	log.Printf("Bot is authorized as: @%s", api.Self.UserName)
 
 	return &Bot{
-		api:     api,
-		db:      db,
-		cache:   redisCache,
-		scraper: scraperService,
+		api:                  api,
+		db:                   db,
+		cache:                redisCache,
+		scraper:              scraperService,
+		pendingNotifications: make(map[string][]models.Listing),
 	}, nil
 }
 
@@ -64,7 +71,9 @@ func (b *Bot) Start() {
 	log.Println("Bot is started! Waiting for message...")
 
 	for update := range updates {
-		if update.Message != nil {
+		if update.CallbackQuery != nil {
+			b.handleCallback(update.CallbackQuery)
+		} else if update.Message != nil {
 			b.handleMessage(update.Message)
 		}
 	}
@@ -546,19 +555,64 @@ func (b *Bot) handleToggle(message *tgbotapi.Message) {
 func (b *Bot) ListenNotifications(notifyCh <-chan models.Notification) {
 	log.Println("Listening for notifications...")
 	for notif := range notifyCh {
-		text := fmt.Sprintf("🔔 Нові оголошення за фільтром \"%s\"!\n\n", notif.FilterName)
+		notifID := fmt.Sprintf("notif_%d", atomic.AddInt64(&b.notifCounter, 1))
 
-		for i, listing := range notif.Listings {
-			if i >= 10 {
-				text += fmt.Sprintf("... і ще %d оголошень\n", len(notif.Listings)-10)
-				break
-			}
-			text += fmt.Sprintf("%d. %s\n💰 %s\n📍 %s\n🔗 %s\n\n",
-				i+1, listing.Title, listing.Price, listing.Location, listing.URL)
+		b.notifMutex.Lock()
+		b.pendingNotifications[notifID] = notif.Listings
+		b.notifMutex.Unlock()
+
+		text := fmt.Sprintf("🔔 Знайдено %d нових оголошень за фільтром \"%s\"!",
+			len(notif.Listings), notif.FilterName)
+
+		msg := tgbotapi.NewMessage(notif.TelegramID, text)
+		msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(
+			tgbotapi.NewInlineKeyboardRow(
+				tgbotapi.NewInlineKeyboardButtonData(
+					fmt.Sprintf("📋 Показати (%d)", len(notif.Listings)),
+					"show:"+notifID,
+				),
+			),
+		)
+
+		if _, err := b.api.Send(msg); err != nil {
+			log.Printf("Error sending notification: %v", err)
 		}
-
-		b.sendMessage(notif.TelegramID, text)
 	}
+}
+
+func (b *Bot) handleCallback(callback *tgbotapi.CallbackQuery) {
+	answer := tgbotapi.NewCallback(callback.ID, "")
+	b.api.Send(answer)
+
+	if !strings.HasPrefix(callback.Data, "show:") {
+		return
+	}
+
+	notifID := strings.TrimPrefix(callback.Data, "show:")
+
+	b.notifMutex.Lock()
+	listings, exists := b.pendingNotifications[notifID]
+	if exists {
+		delete(b.pendingNotifications, notifID)
+	}
+	b.notifMutex.Unlock()
+
+	if !exists || len(listings) == 0 {
+		b.sendMessage(callback.Message.Chat.ID, "⏳ Ці оголошення вже були показані або застаріли.")
+		return
+	}
+
+	text := fmt.Sprintf("📋 Нові оголошення (%d):\n\n", len(listings))
+	for i, listing := range listings {
+		if i >= 10 {
+			text += fmt.Sprintf("... і ще %d оголошень\n", len(listings)-10)
+			break
+		}
+		text += fmt.Sprintf("%d. %s\n💰 %s\n📍 %s\n🔗 %s\n\n",
+			i+1, listing.Title, listing.Price, listing.Location, listing.URL)
+	}
+
+	b.sendMessage(callback.Message.Chat.ID, text)
 }
 
 func (b *Bot) sendSearchResults(chatID int64, filterName string, listings []models.Listing) {
