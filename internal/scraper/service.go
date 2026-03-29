@@ -190,6 +190,8 @@ func (s *ScraperService) scrapeFilter(filter *database.UserFilter) error {
 		existingURLs = []string{}
 	}
 
+	isFirstScrape := len(existingURLs) == 0
+
 	existingMap := make(map[string]bool)
 	for _, url := range existingURLs {
 		existingMap[url] = true
@@ -204,6 +206,17 @@ func (s *ScraperService) scrapeFilter(filter *database.UserFilter) error {
 				log.Printf("Failed to save listing %s: %v", listing.URL, err)
 			}
 		}
+	}
+
+	if isFirstScrape {
+		for _, listing := range newListings {
+			if err := s.db.MarkListingAsNotified(listing.URL); err != nil {
+				log.Printf("Failed to mark baseline listing %s: %v", listing.URL, err)
+			}
+		}
+		log.Printf("📸 First scrape for filter %d: saved %d listings as baseline (no notification)",
+			filter.ID, len(newListings))
+		return nil
 	}
 
 	var notifiableListings []models.Listing
@@ -221,7 +234,6 @@ func (s *ScraperService) scrapeFilter(filter *database.UserFilter) error {
 	log.Printf("    Total found: %d", len(listings))
 	log.Printf("    Already known: %d", len(listings)-len(newListings))
 	log.Printf("    New listings: %d", len(newListings))
-	log.Printf("    Already notified: %d", len(newListings)-len(notifiableListings))
 	log.Printf("    Ready to notify: %d", len(notifiableListings))
 
 	if len(notifiableListings) > 0 {
