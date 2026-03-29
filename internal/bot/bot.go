@@ -15,9 +15,9 @@ import (
 )
 
 type Bot struct {
-	api           *tgbotapi.BotAPI
-	db            *database.DB
-	cache         *cache.RedisCache
+	api   *tgbotapi.BotAPI
+	db    *database.DB
+	cache *cache.RedisCache
 }
 
 type FilterCreationState struct {
@@ -47,9 +47,9 @@ func NewBot(token string, db *database.DB) (*Bot, error) {
 	log.Printf("Bot is authorized as: @%s", api.Self.UserName)
 
 	return &Bot{
-		api:           api,
-		db:            db,
-		cache:         redisCache,
+		api:   api,
+		db:    db,
+		cache: redisCache,
 	}, nil
 }
 
@@ -424,6 +424,24 @@ func (b *Bot) handleFind(message *tgbotapi.Message) {
 	b.cache.CacheSearchResults(cacheKey, listings)
 
 	b.sendSearchResults(message.Chat.ID, selectedFilter.Name, listings)
+}
+
+func (b *Bot) ListenNotifications(notifyCh <-chan models.Notification) {
+	log.Println("Listening for notifications...")
+	for notif := range notifyCh {
+		text := fmt.Sprintf("🔔 Нові оголошення за фільтром \"%s\"!\n\n", notif.FilterName)
+
+		for i, listing := range notif.Listings {
+			if i >= 10 {
+				text += fmt.Sprintf("... і ще %d оголошень\n", len(notif.Listings)-10)
+				break
+			}
+			text += fmt.Sprintf("%d. %s\n💰 %s\n📍 %s\n🔗 %s\n\n",
+				i+1, listing.Title, listing.Price, listing.Location, listing.URL)
+		}
+
+		b.sendMessage(notif.TelegramID, text)
+	}
 }
 
 func (b *Bot) sendSearchResults(chatID int64, filterName string, listings []models.Listing) {

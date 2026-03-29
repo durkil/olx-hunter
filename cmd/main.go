@@ -1,16 +1,18 @@
 package main
 
 import (
-	"log"
-    "os"
-
-    "olx-hunter/internal/bot"
-    "olx-hunter/internal/database"
-	"olx-hunter/internal/scraper"
 	"context"
+	"log"
+	"os"
 	"os/signal"
 	"syscall"
 	"time"
+
+	"olx-hunter/internal/bot"
+	"olx-hunter/internal/database"
+	"olx-hunter/internal/models"
+	"olx-hunter/internal/scraper"
+
 	"github.com/joho/godotenv"
 )
 
@@ -37,30 +39,30 @@ func main() {
 	}
 
 	log.Println("🤖 Starting Telegram Bot...")
-	telegramBot.Start()
 
 	log.Println("Starting OLX Hunter Scraper Service...")
 
-	scraperService := scraper.NewScraperService(db)
+	notifyChan := make(chan models.Notification, 100)
+
+	scraperService := scraper.NewScraperService(db, notifyChan, 5)
 	if err := scraperService.LoadExistingFilters(); err != nil {
 		log.Fatalf("Failed to load existing filters: %v", err)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 
 	go scraperService.StartPeriodicScraping(ctx)
-
-	go func() {
-		c := make(chan os.Signal, 1)
-        signal.Notify(c, os.Interrupt, syscall.SIGTERM)
-        <-c
-        log.Println("Shutdown signal received...")
-        cancel()
-        time.Sleep(2 * time.Second)
-        os.Exit(0)
-	}()
+	go telegramBot.Start()
+	go telegramBot.ListenNotifications(notifyChan)
 
 	log.Println("OLX Hunter is running!")
-    telegramBot.Start()
+
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+	<-sigChan
+
+	log.Println("Shutdown signal received...")
+	cancel()
+	time.Sleep(2 * time.Second)
+	log.Println("Goodbye!")
 }

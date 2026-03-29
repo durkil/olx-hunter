@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"olx-hunter/internal/database"
@@ -12,17 +13,24 @@ import (
 )
 
 type ScraperService struct {
-	db       *database.DB
-	scraper  *OLXScraper
+	db          *database.DB
+	scraper     *OLXScraper
+	notifyCh    chan<- models.Notification
+	workerCount int
 
 	activeFilters map[uint]*database.UserFilter
 	filtersMutex  sync.RWMutex
 }
 
-func NewScraperService(db *database.DB) *ScraperService {
+func NewScraperService(db *database.DB, notifyCh chan<- models.Notification, workerCount int) *ScraperService {
+	if workerCount < 1 {
+		workerCount = 3
+	}
 	return &ScraperService{
 		db:            db,
 		scraper:       NewOLXScraper(),
+		notifyCh:      notifyCh,
+		workerCount:   workerCount,
 		activeFilters: make(map[uint]*database.UserFilter),
 	}
 }
@@ -78,12 +86,10 @@ func (s *ScraperService) scrapeAllFilters() {
 	startTime := time.Now()
 
 	s.filtersMutex.RLock()
-
 	filters := make([]*database.UserFilter, 0, len(s.activeFilters))
 	for _, filter := range s.activeFilters {
 		filters = append(filters, filter)
 	}
-
 	s.filtersMutex.RUnlock()
 
 	if len(filters) == 0 {
@@ -91,29 +97,39 @@ func (s *ScraperService) scrapeAllFilters() {
 		return
 	}
 
-	log.Printf("Starting scraping session: %d filters to process", len(filters))
+	log.Printf("Starting scraping session: %d filters, %d workers", len(filters), s.workerCount)
 
-	successCount := 0
-	errorCount := 0
+	var successCount, errorCount int64
+	jobs := make(chan *database.UserFilter, len(filters))
+	var wg sync.WaitGroup
 
-	for i, filter := range filters {
-		log.Printf("[%d/%d] Processing filter: ID=%d, Query='%s'",
-			i+1, len(filters), filter.ID, filter.Query)
+	for w := 0; w < s.workerCount; w++ {
+		wg.Add(1)
+		go func(workerID int) {
+			defer wg.Done()
+			for filter := range jobs {
+				log.Printf("[worker %d] Processing filter ID=%d, Query='%s'",
+					workerID, filter.ID, filter.Query)
 
-		if err := s.scrapeFilter(filter); err != nil {
-			log.Printf("[%d/%d] Error scraping filter %d: %v",
-				i+1, len(filters), filter.ID, err)
-			errorCount++
-		} else {
-			log.Printf("✅ [%d/%d] Successfully scraped filter %d",
-				i+1, len(filters), filter.ID)
-			successCount++
-		}
+				if err := s.scrapeFilter(filter); err != nil {
+					log.Printf("[worker %d] Error filter %d: %v", workerID, filter.ID, err)
+					atomic.AddInt64(&errorCount, 1)
+				} else {
+					log.Printf("[worker %d] ✅ Done filter %d", workerID, filter.ID)
+					atomic.AddInt64(&successCount, 1)
+				}
 
-		if i < len(filters)-1 {
-			time.Sleep(3 * time.Second)
-		}
+				time.Sleep(2 * time.Second)
+			}
+		}(w)
 	}
+
+	for _, filter := range filters {
+		jobs <- filter
+	}
+	close(jobs)
+
+	wg.Wait()
 
 	duration := time.Since(startTime)
 	log.Printf("Scraping session completed:")
@@ -183,6 +199,20 @@ func (s *ScraperService) scrapeFilter(filter *database.UserFilter) error {
 	log.Printf("    New listings: %d", len(newListings))
 	log.Printf("    Already notified: %d", len(newListings)-len(notifiableListings))
 	log.Printf("    Ready to notify: %d", len(notifiableListings))
+
+	if len(notifiableListings) > 0 {
+		s.notifyCh <- models.Notification{
+			TelegramID: filter.User.TelegramID,
+			FilterName: filter.Name,
+			Listings:   notifiableListings,
+		}
+
+		for _, listing := range notifiableListings {
+			if err := s.db.MarkListingAsNotified(listing.URL); err != nil {
+				log.Printf("Failed to mark listing as notified %s: %v", listing.URL, err)
+			}
+		}
+	}
 
 	return nil
 }
