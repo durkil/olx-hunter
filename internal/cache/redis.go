@@ -62,10 +62,10 @@ func (r *RedisCache) GetCachedResults(query string) ([]models.Listing, bool) {
 }
 
 func (r *RedisCache) CanScrapeQuery(query string) bool {
-	key := fmt.Sprintf("rate_limit:%s", query)
+	key := fmt.Sprintf("rate_limit:manual:%s", query)
 	count := r.client.Incr(r.ctx, key).Val()
 	if count == 1 {
-		r.client.Expire(r.ctx, key, 5*time.Minute)
+		r.client.Expire(r.ctx, key, 30*time.Second)
 	}
-	return count == 1
+	return count <= 3
 }
