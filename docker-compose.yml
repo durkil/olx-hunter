@@ -11,5 +11,11 @@ services:
       - postgres_data:/var/lib/postgresql/data
       - ./migrations:/docker-entrypoint-initdb.d
 
+  redis:
+    image: redis:7-alpine
+    container_name: redis-olx
+    ports:
+      - "6379:6379"
+
 volumes:
   postgres_data:

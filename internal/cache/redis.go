@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"olx-hunter/internal/scraper"
+	"olx-hunter/internal/models"	
 	"time"
 
 	"github.com/go-redis/redis/v8"
@@ -15,11 +15,11 @@ type RedisCache struct {
 	ctx    context.Context
 }
 
-func NewRedisCache() *RedisCache {
+func NewRedisCache(addr string) *RedisCache {
 	client := redis.NewClient(&redis.Options{
-		Addr: "localhost:6379",
+		Addr:     addr,
 		Password: "",
-		DB: 0,
+		DB:       0,
 	})
 
 	return &RedisCache{
@@ -32,7 +32,7 @@ func (r *RedisCache) Ping() error {
 	return r.client.Ping(r.ctx).Err()
 }
 
-func (r *RedisCache) CacheSearchResults(query string, results []scraper.Listing) error {
+func (r *RedisCache) CacheSearchResults(query string, results []models.Listing) error {
 	key := fmt.Sprintf("scraping:%s", query)
 	data, err := json.Marshal(results)
 	if err != nil {
@@ -42,7 +42,7 @@ func (r *RedisCache) CacheSearchResults(query string, results []scraper.Listing)
 	return r.client.Set(r.ctx, key, data, 10*time.Minute).Err()
 }
 
-func (r *RedisCache) GetCachedResults(query string) ([]scraper.Listing, bool) {
+func (r *RedisCache) GetCachedResults(query string) ([]models.Listing, bool) {
 	key := fmt.Sprintf("scraping:%s", query)
 	data, err := r.client.Get(r.ctx, key).Result()
 	if err == redis.Nil {
@@ -52,7 +52,7 @@ func (r *RedisCache) GetCachedResults(query string) ([]scraper.Listing, bool) {
 		return nil, false
 	}
 
-	var results []scraper.Listing
+	var results []models.Listing
 	err = json.Unmarshal([]byte(data), &results)
 	if err != nil {
 		return nil, false

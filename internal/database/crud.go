@@ -1,6 +1,10 @@
 package database
 
-import "gorm.io/gorm"
+import (
+	"olx-hunter/internal/models"
+
+	"gorm.io/gorm"
+)
 
 func (db *DB) CreateOrUpdateUser(telegramID int64, username, firstName string) (*User, error) {
 	user := &User{}
@@ -92,3 +96,44 @@ func (db *DB) GetActiveFilters() ([]*UserFilter, error) {
 	return filters, err
 }
 
+func (db *DB) SaveListing(filterID uint, listing models.Listing) error {
+	savedListing := SavedListing{
+		FilterID: filterID,
+		URL:      listing.URL,
+		Title:    listing.Title,
+		Price:    listing.Price,
+		Location: listing.Location,
+	}
+
+	result := db.Where("url = ?", listing.URL).FirstOrCreate(&savedListing)
+	return result.Error
+}
+
+func (db *DB) GetExistingURLs(filterID uint) ([]string, error) {
+	var urls []string
+	err := db.Model(&SavedListing{}).Where("filter_id = ?", filterID).Pluck("url", &urls).Error
+	return urls, err
+}
+
+func (db *DB) GetFilterWithUser(filterID, userID uint) (*UserFilter, error) {
+	var filter UserFilter
+	err := db.Preload("User").Where("id = ? AND user_id = ?", filterID, userID).First(&filter).Error
+	if err == gorm.ErrRecordNotFound {
+		return nil, nil
+	}
+	return &filter, err
+}
+
+func (db *DB) IsListingNotified(url string) (bool, error) {
+	var savedListing SavedListing
+	err := db.Where("url = ?", url).Select("is_notified").First(&savedListing).Error
+	if err == gorm.ErrRecordNotFound {
+		return false, nil
+	} else {
+		return savedListing.IsNotified, nil
+	}
+}
+
+func (db *DB) MarkListingAsNotified(url string) error {
+	return db.Model(&SavedListing{}).Where("url = ?", url).Update("is_notified", true).Error
+}

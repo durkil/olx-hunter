@@ -27,8 +27,20 @@ type UserFilter struct {
 	City      string    `json:"city" gorm:"size:50"`
 	IsActive  bool      `json:"is_active" gorm:"default:true"`
 	CreatedAt time.Time `json:"created_at"`
-	
-	User      User      `gorm:"foreignKey:UserID"`
+
+	User User `gorm:"foreignKey:UserID"`
+}
+
+type SavedListing struct {
+	ID         uint      `gorm:"primaryKey"`
+	FilterID   uint      `gorm:"index"`
+	URL        string    `gorm:"uniqueIndex;size:500"`
+	Title      string    `gorm:"size:300"`
+	Price      string    `gorm:"size:500"`
+	Location   string    `gorm:"size:200"`
+	CreatedAt  time.Time `gorm:"autoCreateTime"`
+	UpdatedAt  time.Time `gorm:"autoUpdateTime"`
+	IsNotified bool      `gorm:"default:false;index"`
 }
 
 type DB struct {

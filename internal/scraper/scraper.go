@@ -3,29 +3,33 @@ package scraper
 import (
 	"fmt"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
+
+	"olx-hunter/internal/models"
 
 	"github.com/gocolly/colly/v2"
 )
 
-type Listing struct {
-	URL      string `json:"url"`
-	Title    string `json:"title"`
-	Price    string `json:"price"`
-	PriceInt int    `json:"price_int"`
-	Location string `json:"location"`
-}
-
-type SearchFilters struct {
-	Query    string `json:"query"`
-	MinPrice int    `json:"min_price"`
-	MaxPrice int    `json:"max_price"`
-	City     string `json:"city"`
-}
-
 type Scraper interface {
-	SearchListings(filters SearchFilters) ([]Listing, error)
+	SearchListings(filters models.SearchFilters) ([]models.Listing, error)
+}
+
+// cleanText очищає текст від CSS, HTML та інших артефактів
+func cleanText(text string) string {
+	// Видаляємо CSS
+	cssRegex := regexp.MustCompile(`\.css-[^;]+;|\.css-[^}]+}`)
+	text = cssRegex.ReplaceAllString(text, "")
+
+	// Видаляємо CSS властивості
+	propertyRegex := regexp.MustCompile(`[a-zA-Z-]+:\s*[^;]+;`)
+	text = propertyRegex.ReplaceAllString(text, "")
+
+	// Видаляємо зайві пробіли та переводи рядків
+	text = regexp.MustCompile(`\s+`).ReplaceAllString(text, " ")
+
+	return strings.TrimSpace(text)
 }
 
 type OLXScraper struct {
@@ -49,13 +53,13 @@ func parsePrice(priceStr string) int {
 	return price
 }
 
-func (s *OLXScraper) SearchListings(filters SearchFilters) ([]Listing, error) {
-	searchURL := fmt.Sprintf("https://www.olx.ua/uk/list/q-%s/", filters.Query)
+func (s *OLXScraper) SearchListings(filters models.SearchFilters) ([]models.Listing, error) {
+	searchURL := fmt.Sprintf("https://www.olx.ua/uk/list/q-%s/?search[order]=created_at:desc", filters.Query)
 
 	c := colly.NewCollector()
 
 	urlMap := make(map[string]bool)
-	var listings []Listing
+	var listings []models.Listing
 
 	c.OnHTML("a[href*='/d/uk/obyavlenie/']", func(e *colly.HTMLElement) {
 		fullURL := "https://www.olx.ua" + e.Attr("href")
@@ -69,12 +73,12 @@ func (s *OLXScraper) SearchListings(filters SearchFilters) ([]Listing, error) {
 			priceText := card.Find("p[data-testid='ad-price']").Text()
 			location := card.Find("p[data-testid='location-date']").Text()
 
-			listing := Listing{
+			listing := models.Listing{
 				URL:      fullURL,
-				Title:    strings.TrimSpace(title),
-				Price:    strings.TrimSpace(priceText),
+				Title:    cleanText(title),
+				Price:    cleanText(priceText),
 				PriceInt: parsePrice(priceText),
-				Location: strings.TrimSpace(location),
+				Location: cleanText(location),
 			}
 
 			if filters.MinPrice > 0 && listing.PriceInt < filters.MinPrice {
