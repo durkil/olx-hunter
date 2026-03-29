@@ -1,8 +1,8 @@
 package database
 
 import (
-
 	"olx-hunter/internal/models"
+
 	"gorm.io/gorm"
 )
 

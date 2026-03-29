@@ -23,6 +23,7 @@ type Bot struct {
 	scraper *scraper.ScraperService
 
 	pendingNotifications map[string][]models.Listing
+	lastNotifMessages    map[string]int // key: "chatID:filterName" -> message ID
 	notifMutex           sync.Mutex
 	notifCounter         int64
 }
@@ -59,6 +60,7 @@ func NewBot(token string, db *database.DB, redisAddr string, scraperService *scr
 		cache:                redisCache,
 		scraper:              scraperService,
 		pendingNotifications: make(map[string][]models.Listing),
+		lastNotifMessages:    make(map[string]int),
 	}, nil
 }
 
@@ -556,8 +558,13 @@ func (b *Bot) ListenNotifications(notifyCh <-chan models.Notification) {
 	log.Println("Listening for notifications...")
 	for notif := range notifyCh {
 		notifID := fmt.Sprintf("notif_%d", atomic.AddInt64(&b.notifCounter, 1))
+		filterKey := fmt.Sprintf("%d:%s", notif.TelegramID, notif.FilterName)
 
 		b.notifMutex.Lock()
+		if oldMsgID, exists := b.lastNotifMessages[filterKey]; exists {
+			del := tgbotapi.NewDeleteMessage(notif.TelegramID, oldMsgID)
+			b.api.Send(del)
+		}
 		b.pendingNotifications[notifID] = notif.Listings
 		b.notifMutex.Unlock()
 
@@ -574,8 +581,13 @@ func (b *Bot) ListenNotifications(notifyCh <-chan models.Notification) {
 			),
 		)
 
-		if _, err := b.api.Send(msg); err != nil {
+		sent, err := b.api.Send(msg)
+		if err != nil {
 			log.Printf("Error sending notification: %v", err)
+		} else {
+			b.notifMutex.Lock()
+			b.lastNotifMessages[filterKey] = sent.MessageID
+			b.notifMutex.Unlock()
 		}
 	}
 }
@@ -596,6 +608,9 @@ func (b *Bot) handleCallback(callback *tgbotapi.CallbackQuery) {
 		delete(b.pendingNotifications, notifID)
 	}
 	b.notifMutex.Unlock()
+
+	del := tgbotapi.NewDeleteMessage(callback.Message.Chat.ID, callback.Message.MessageID)
+	b.api.Send(del)
 
 	if !exists || len(listings) == 0 {
 		b.sendMessage(callback.Message.Chat.ID, "⏳ Ці оголошення вже були показані або застаріли.")

@@ -7,8 +7,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/gocolly/colly/v2"
 	"olx-hunter/internal/models"
+
+	"github.com/gocolly/colly/v2"
 )
 
 type Scraper interface {
